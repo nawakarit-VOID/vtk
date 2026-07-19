@@ -33,28 +33,36 @@ var separatorRe = regexp.MustCompile(`[._\-]+`)
 var loneNumberRe = regexp.MustCompile(`\b\d{1,4}\b`)
 var multiSpaceRe = regexp.MustCompile(`\s+`)
 
-// seasonThRe จับ "ซีซั่น 2" หรือ "ปี 2" (คนไทยมักใช้ "ปี" แทนคำว่าซีซั่น เช่น "นารูโตะ ปี 2")
-// ใช้ตัวเลข 1-2 หลักเท่านั้น เพื่อไม่ให้ไปชนกับปี ค.ศ. 4 หลักที่บอกปีที่ออกฉาย เช่น "หนังปี 2019"
-// (ไม่ใช้ \b เพราะ regexp ของ Go นับขอบเขตคำแบบ ASCII ไม่รู้จักตัวอักษรไทยเป็น word character)
-var seasonThRe = regexp.MustCompile(`(?:ซีซั่น|ปี)\.?\s*(\d{1,2})`)
+// seasonPatterns คือ "คำที่ใช้บอกเลขซีซั่น" ทั้งหมดที่รู้จัก แต่ละตัวต้องมี capture group เดียว
+// สำหรับเลขซีซั่น (1-2 หลัก เพื่อไม่ให้ชนกับปี ค.ศ. 4 หลักอย่าง "หนังปี 2019")
+//
+// ในอนาคตถ้าเจอคำใหม่ที่ใช้บอกซีซั่น (เช่น "ภาค", "part") แค่เพิ่ม regex อีกบรรทัดเข้ามาใน list นี้
+// ไม่ต้องแก้ logic ส่วนอื่นเลย เพราะ extractSeason() จะวนลูปใช้ทุก pattern กับชื่อไฟล์เสมอ
+// (ไม่ใช่ลองทีละตัวแล้ว return ทันทีที่เจอตัวแรก) จึงรองรับกรณีที่มีหลายคำปนกันในชื่อเดียว
 
-// seasonEnRe จับ "season 2" หรือ "ss2" / "ss 2"
-var seasonEnRe = regexp.MustCompile(`(?i)\b(?:season|ss)\.?\s*(\d{1,2})\b`)
+var seasonPatterns = []*regexp.Regexp{
+	// ไทย: "ซีซั่น 9", "ปี 9" (ไม่ใช้ \b เพราะ regexp ของ Go นับขอบเขตคำแบบ ASCII
+	// ไม่รู้จักตัวอักษรไทยเป็น word character)
+	regexp.MustCompile(`(?:ซีซั่น|ปี)\.?\s*(\d{1,2})`),
+	// อังกฤษ: "season 9", "ss9", "ss 9"
+	regexp.MustCompile(`(?i)\b(?:season|ss)\.?\s*(\d{1,2})\b`),
+}
 
 // extractSeason ดึงเลขซีซั่นออกจากชื่อไฟล์ (ถ้ามี) แล้วคืนชื่อที่ตัดคำระบุซีซั่นออกแล้ว + เลขซีซั่น
-// คืนเลขซีซั่น 0 หมายถึงไม่พบ/ไม่ได้ระบุซีซั่น
+// วนลูปใช้ทุก pattern ใน seasonPatterns กับชื่อไฟล์เสมอ (ไม่ return ทันทีที่เจอตัวแรก)
+// เพื่อให้รองรับกรณีมีหลายคำ/หลายภาษาปนกันในชื่อเดียวกัน
+// คืนเลขซีซั่น 0 หมายถึงไม่พบ/ไม่ได้ระบุซีซั่นเลย
 func extractSeason(name string) (string, int) {
-	if m := seasonThRe.FindStringSubmatch(name); m != nil {
-		if n, err := strconv.Atoi(m[1]); err == nil {
-			return seasonThRe.ReplaceAllString(name, " "), n
+	season := 0
+	for _, re := range seasonPatterns {
+		if m := re.FindStringSubmatch(name); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil {
+				season = n
+			}
+			name = re.ReplaceAllString(name, " ")
 		}
 	}
-	if m := seasonEnRe.FindStringSubmatch(name); m != nil {
-		if n, err := strconv.Atoi(m[1]); err == nil {
-			return seasonEnRe.ReplaceAllString(name, " "), n
-		}
-	}
-	return name, 0
+	return name, season
 }
 
 // normalizeTitle พยายามดึง "ชื่อเรื่องจริง" ออกจากชื่อไฟล์ โดยตัดเลขตอน/แท็กคุณภาพ/วงเล็บ/เลขซีซั่นออก
