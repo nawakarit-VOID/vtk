@@ -4,13 +4,11 @@
 package main
 
 import (
-	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 )
 
 // qualityTags คือคำที่มักปนอยู่ในชื่อไฟล์วิดีโอแต่ไม่ใช่ส่วนหนึ่งของชื่อเรื่องจริง
@@ -26,9 +24,22 @@ var qualityTags = []string{
 	"ดูซีรี่ย์",
 }
 
+// qualityTagRes คือ qualityTags ที่คอมไพล์เป็น regex case-insensitive ไว้ล่วงหน้า
+// ใช้สำหรับตอนตั้งชื่อโฟลเดอร์ (buildDisplayName) ซึ่งต้องคงตัวพิมพ์เล็ก/ใหญ่เดิมของชื่อเรื่องไว้
+// (ต่างจาก normalizeTitle ที่แปลงเป็นตัวพิมพ์เล็กหมดก่อนเพราะใช้เทียบความคล้ายเท่านั้น)
+var qualityTagRes = compileQualityTagRes()
+
+func compileQualityTagRes() []*regexp.Regexp {
+	res := make([]*regexp.Regexp, 0, len(qualityTags))
+	for _, t := range qualityTags {
+		res = append(res, regexp.MustCompile(`(?i)`+regexp.QuoteMeta(t)))
+	}
+	return res
+}
+
 var bracketRe = regexp.MustCompile(`[\[\(\{][^\]\)\}]*[\]\)\}]`)
-var seasonEpRe = regexp.MustCompile(`s\d{1,2}e\d{1,4}`)
-var epTokenRe = regexp.MustCompile(`\bep?\.?[\s._-]?\d{1,4}\b`)
+var seasonEpRe = regexp.MustCompile(`(?i)s\d{1,2}e\d{1,4}`)         // S01E12 แบบโค้ดรวม (ไม่ใช่ตัวหนังสือ)
+var epTokenRe = regexp.MustCompile(`(?i)\bep?\.?[\s._-]?\d{1,4}\b`) // EP12 / E12
 var separatorRe = regexp.MustCompile(`[._\-]+`)
 var loneNumberRe = regexp.MustCompile(`\b\d{1,4}\b`)
 var multiSpaceRe = regexp.MustCompile(`\s+`)
@@ -36,22 +47,18 @@ var multiSpaceRe = regexp.MustCompile(`\s+`)
 // seasonPatterns คือ "คำที่ใช้บอกเลขซีซั่น" ทั้งหมดที่รู้จัก แต่ละตัวต้องมี capture group เดียว
 // สำหรับเลขซีซั่น (1-2 หลัก เพื่อไม่ให้ชนกับปี ค.ศ. 4 หลักอย่าง "หนังปี 2019")
 //
+// ใช้เฉพาะตอน "จับกลุ่มไฟล์" (หาว่าไฟล์ไหนเป็นซีซั่นเดียวกัน) เท่านั้น
+// ไม่ได้เอาไปตัดคำออกจากชื่อโฟลเดอร์จริง (ดู buildDisplayName ที่คงคำพวกนี้ไว้)
+//
 // ในอนาคตถ้าเจอคำใหม่ที่ใช้บอกซีซั่น (เช่น "ภาค", "part") แค่เพิ่ม regex อีกบรรทัดเข้ามาใน list นี้
-// ไม่ต้องแก้ logic ส่วนอื่นเลย เพราะ extractSeason() จะวนลูปใช้ทุก pattern กับชื่อไฟล์เสมอ
-// (ไม่ใช่ลองทีละตัวแล้ว return ทันทีที่เจอตัวแรก) จึงรองรับกรณีที่มีหลายคำปนกันในชื่อเดียว
-
 var seasonPatterns = []*regexp.Regexp{
-	// ไทย: "ซีซั่น 9", "ปี 9" (ไม่ใช้ \b เพราะ regexp ของ Go นับขอบเขตคำแบบ ASCII
-	// ไม่รู้จักตัวอักษรไทยเป็น word character)
 	regexp.MustCompile(`(?:ซีซั่น|ปี)\.?\s*(\d{1,2})`),
-	// อังกฤษ: "season 9", "ss9", "ss 9"
 	regexp.MustCompile(`(?i)\b(?:season|ss)\.?\s*(\d{1,2})\b`),
 }
 
 // extractSeason ดึงเลขซีซั่นออกจากชื่อไฟล์ (ถ้ามี) แล้วคืนชื่อที่ตัดคำระบุซีซั่นออกแล้ว + เลขซีซั่น
 // วนลูปใช้ทุก pattern ใน seasonPatterns กับชื่อไฟล์เสมอ (ไม่ return ทันทีที่เจอตัวแรก)
 // เพื่อให้รองรับกรณีมีหลายคำ/หลายภาษาปนกันในชื่อเดียวกัน
-// คืนเลขซีซั่น 0 หมายถึงไม่พบ/ไม่ได้ระบุซีซั่นเลย
 func extractSeason(name string) (string, int) {
 	season := 0
 	for _, re := range seasonPatterns {
@@ -65,13 +72,12 @@ func extractSeason(name string) (string, int) {
 	return name, season
 }
 
-// normalizeTitle พยายามดึง "ชื่อเรื่องจริง" ออกจากชื่อไฟล์ โดยตัดเลขตอน/แท็กคุณภาพ/วงเล็บ/เลขซีซั่นออก
-// คืนค่าเป็น (ชื่อเรื่องล้วน ๆ ตัวพิมพ์เล็ก, เลขซีซั่นที่เจอ) ใช้สำหรับเทียบความคล้ายเท่านั้น (ไม่ใช้แสดงผลตรง ๆ)
+// normalizeTitle ใช้สำหรับ "จับกลุ่ม" เท่านั้น: ตัดเลขตอน/แท็กคุณภาพ/วงเล็บ/คำบอกซีซั่นออกให้เหลือแก่นชื่อเรื่อง
+// คืนค่าเป็น (ชื่อเรื่องล้วน ๆ ตัวพิมพ์เล็ก, เลขซีซั่นที่เจอ)
 func normalizeTitle(fileName string) (string, int) {
 	name := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 	name = strings.ToLower(name)
 
-	// ดึงเลขซีซั่นออกไปเก็บต่างหากก่อน ไม่ให้โดนลบทิ้งปนกับเลขตอนทีหลัง
 	name, season := extractSeason(name)
 
 	name = bracketRe.ReplaceAllString(name, " ")
@@ -83,26 +89,69 @@ func normalizeTitle(fileName string) (string, int) {
 	}
 
 	name = separatorRe.ReplaceAllString(name, " ")
-	name = loneNumberRe.ReplaceAllString(name, " ") // เลขตอนที่หลงเหลืออยู่เดี่ยว ๆ
+	name = loneNumberRe.ReplaceAllString(name, " ") // เลขตอน/เลขซีซั่นที่หลงเหลืออยู่เดี่ยว ๆ
 	name = strings.TrimSpace(multiSpaceRe.ReplaceAllString(name, " "))
 
 	return name, season
 }
 
-// toDisplayTitle แปลงชื่อที่ normalize แล้วให้อ่านง่ายขึ้น สำหรับใช้ตั้งชื่อโฟลเดอร์
-func toDisplayTitle(normalized string) string {
-	if normalized == "" {
+// stripTrailingEpisodeNumber ตัดเลขตอน (ที่รู้ค่าแน่นอนอยู่แล้วจากตอน scan) ออกจากท้ายชื่อ
+// ตัดเฉพาะตอนที่มันอยู่ท้ายสุดของชื่อ (หลัง trim) เท่านั้น เพื่อไม่ไปพลาดตัดเลขซีซั่นที่อยู่กลางชื่อ
+// เช่น "Rick and Morty Season 9 ริค แอนด์ มอร์ตี้ ปี 9   6" -> ตัด "6" ท้ายสุดออก เหลือเลขซีซั่น 9 ไว้ครบ
+func stripTrailingEpisodeNumber(name string, epNum int) string {
+	trimmed := strings.TrimSpace(name)
+	if epNum <= 0 {
+		return trimmed
+	}
+	re := regexp.MustCompile(`\b` + strconv.Itoa(epNum) + `\b\s*$`)
+	trimmed = re.ReplaceAllString(trimmed, "")
+	return strings.TrimSpace(trimmed)
+}
+
+// buildDisplayName สร้างชื่อสำหรับตั้งเป็นโฟลเดอร์ โดยคงคำเดิมในชื่อไฟล์ไว้ให้มากที่สุด
+// (รวมถึงคำว่า Season/ปี ที่บอกซีซั่น) ตัดออกเฉพาะ: นามสกุลไฟล์, วงเล็บ, โค้ด SxxExx,
+// แท็ก EP/E ที่เป็นตัวเลขตอน, แท็กคุณภาพ/เทคนิค และเลขตอนของไฟล์นั้น ๆ ที่อยู่ท้ายชื่อ
+func buildDisplayName(ep *Episode) string {
+	name := strings.TrimSuffix(ep.FileName, filepath.Ext(ep.FileName))
+
+	name = bracketRe.ReplaceAllString(name, " ")
+	name = seasonEpRe.ReplaceAllString(name, " ")
+	name = epTokenRe.ReplaceAllString(name, " ")
+
+	for _, re := range qualityTagRes {
+		name = re.ReplaceAllString(name, " ")
+	}
+
+	name = separatorRe.ReplaceAllString(name, " ")
+	name = strings.TrimSpace(multiSpaceRe.ReplaceAllString(name, " "))
+	name = stripTrailingEpisodeNumber(name, ep.EpisodeNumber)
+
+	if name == "" {
 		return "untitled"
 	}
-	words := strings.Fields(normalized)
-	for i, w := range words {
-		r := []rune(w)
-		if len(r) > 0 {
-			r[0] = unicode.ToUpper(r[0])
+	return name
+}
+
+// mostCommonDisplayName เลือกชื่อโฟลเดอร์ตัวแทนของกลุ่ม โดยใช้ชื่อที่ซ้ำกันบ่อยที่สุด
+// (ปกติทุก episode ในกลุ่มเดียวกันควรได้ display name เดียวกันอยู่แล้ว
+// เพราะต่างกันแค่เลขตอนซึ่งถูกตัดออกไปแล้ว)
+func mostCommonDisplayName(episodes []*Episode) string {
+	counts := map[string]int{}
+	var order []string
+	for _, ep := range episodes {
+		d := buildDisplayName(ep)
+		if _, ok := counts[d]; !ok {
+			order = append(order, d)
 		}
-		words[i] = string(r)
+		counts[d]++
 	}
-	return strings.Join(words, " ")
+	best := order[0]
+	for _, d := range order {
+		if counts[d] > counts[best] {
+			best = d
+		}
+	}
+	return best
 }
 
 // levenshtein คำนวณระยะแก้ไขระหว่างสองสตริง (จำนวนตัวอักษรที่ต้องเพิ่ม/ลบ/แก้)
@@ -162,10 +211,8 @@ func similarEnough(a, b string) bool {
 	return sim >= 0.82
 }
 
-// GroupEpisodesByName จัดกลุ่ม episode ที่ชื่อไฟล์ (หลังตัดเลขตอน/แท็กออก) คล้ายกันเข้าด้วยกัน
-// ไฟล์จะถูกจัดกลุ่มเดียวกันได้ก็ต่อเมื่อ "ชื่อเรื่องคล้ายกัน" และ "เลขซีซั่นตรงกันเป๊ะ" เท่านั้น
-// (ไม่ fuzzy เลขซีซั่น เพื่อไม่ให้ Season 1 กับ Season 2 ถูกรวมกันผิด ๆ)
-// คืนค่าเป็น map[ชื่อโฟลเดอร์ที่เสนอ]episode ในกลุ่มนั้น
+// GroupEpisodesByName จัดกลุ่ม episode ที่ "แก่นชื่อเรื่องคล้ายกัน AND เลขซีซั่นตรงกันเป๊ะ" เข้าด้วยกัน
+// ชื่อโฟลเดอร์ที่ได้จะมาจาก buildDisplayName (คงคำเดิม เช่น Season/ปี ไว้) ไม่ใช่ชื่อที่ normalize แล้ว
 func GroupEpisodesByName(episodes []*Episode) map[string][]*Episode {
 	type cluster struct {
 		titleKey string
@@ -194,10 +241,7 @@ func GroupEpisodesByName(episodes []*Episode) map[string][]*Episode {
 
 	result := map[string][]*Episode{}
 	for _, c := range clusters {
-		display := toDisplayTitle(c.titleKey)
-		if c.season > 0 {
-			display = fmt.Sprintf("%s Season %d", display, c.season)
-		}
+		display := mostCommonDisplayName(c.eps)
 		result[display] = append(result[display], c.eps...)
 	}
 	return result
