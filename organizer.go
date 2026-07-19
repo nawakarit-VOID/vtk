@@ -33,9 +33,10 @@ var separatorRe = regexp.MustCompile(`[._\-]+`)
 var loneNumberRe = regexp.MustCompile(`\b\d{1,4}\b`)
 var multiSpaceRe = regexp.MustCompile(`\s+`)
 
-// seasonThRe จับ "ซีซั่น 2" (ไม่ใช้ \b เพราะ regexp ของ Go นับขอบเขตคำแบบ ASCII
-// ไม่รู้จักตัวอักษรไทยเป็น word character ทำให้ \b ใช้กับข้อความไทยไม่ได้ผลตามที่ต้องการ)
-var seasonThRe = regexp.MustCompile(`ซีซั่น\.?\s*(\d{1,2})`)
+// seasonThRe จับ "ซีซั่น 2" หรือ "ปี 2" (คนไทยมักใช้ "ปี" แทนคำว่าซีซั่น เช่น "นารูโตะ ปี 2")
+// ใช้ตัวเลข 1-2 หลักเท่านั้น เพื่อไม่ให้ไปชนกับปี ค.ศ. 4 หลักที่บอกปีที่ออกฉาย เช่น "หนังปี 2019"
+// (ไม่ใช้ \b เพราะ regexp ของ Go นับขอบเขตคำแบบ ASCII ไม่รู้จักตัวอักษรไทยเป็น word character)
+var seasonThRe = regexp.MustCompile(`(?:ซีซั่น|ปี)\.?\s*(\d{1,2})`)
 
 // seasonEnRe จับ "season 2" หรือ "ss2" / "ss 2"
 var seasonEnRe = regexp.MustCompile(`(?i)\b(?:season|ss)\.?\s*(\d{1,2})\b`)
