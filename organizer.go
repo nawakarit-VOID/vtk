@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Nawakarit
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License v3.0.
 package main
 
 import (
@@ -19,6 +22,7 @@ var qualityTags = []string{
 	"repack", "proper", "uncensored", "uncut",
 	"ตอน", "ตอนที่", "ที่", "พากย์ไทย", "ดูหนัง", "เต็มเรื่อง",
 	"ดูซีรี่ย์",
+	//"ซีซั่น",
 }
 
 var bracketRe = regexp.MustCompile(`[\[\(\{][^\]\)\}]*[\]\)\}]`)
