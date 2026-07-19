@@ -9,6 +9,7 @@ import (
 )
 
 // qualityTags คือคำที่มักปนอยู่ในชื่อไฟล์วิดีโอแต่ไม่ใช่ส่วนหนึ่งของชื่อเรื่องจริง
+// ตั้งชื่อโฟลเดอร์ *คำที่ไม่เอามาตั้งชื่อโฟลเดอร์
 var qualityTags = []string{
 	"1080p", "720p", "480p", "2160p", "4k",
 	"x264", "x265", "h264", "h265", "hevc",
@@ -16,6 +17,8 @@ var qualityTags = []string{
 	"dvdrip", "hdtv", "aac", "flac", "dts",
 	"10bit", "8bit", "dual audio", "dualaudio",
 	"repack", "proper", "uncensored", "uncut",
+	"ตอน", "ตอนที่", "ที่", "พากย์ไทย", "ดูหนัง", "เต็มเรื่อง",
+	"ดูซีรี่ย์",
 }
 
 var bracketRe = regexp.MustCompile(`[\[\(\{][^\]\)\}]*[\]\)\}]`)
