@@ -4,15 +4,17 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
 
 // qualityTags คือคำที่มักปนอยู่ในชื่อไฟล์วิดีโอแต่ไม่ใช่ส่วนหนึ่งของชื่อเรื่องจริง
-// ตั้งชื่อโฟลเดอร์ *คำที่ไม่เอามาตั้งชื่อโฟลเดอร์
+// (ไม่รวมคำเกี่ยวกับซีซั่น เพราะเลขซีซั่นถูกดึงออกไปจัดการแยกต่างหากใน extractSeason)
 var qualityTags = []string{
 	"1080p", "720p", "480p", "2160p", "4k",
 	"x264", "x265", "h264", "h265", "hevc",
@@ -22,7 +24,6 @@ var qualityTags = []string{
 	"repack", "proper", "uncensored", "uncut",
 	"ตอน", "ตอนที่", "ที่", "พากย์ไทย", "ดูหนัง", "เต็มเรื่อง",
 	"ดูซีรี่ย์",
-	//"ซีซั่น",
 }
 
 var bracketRe = regexp.MustCompile(`[\[\(\{][^\]\)\}]*[\]\)\}]`)
@@ -32,11 +33,37 @@ var separatorRe = regexp.MustCompile(`[._\-]+`)
 var loneNumberRe = regexp.MustCompile(`\b\d{1,4}\b`)
 var multiSpaceRe = regexp.MustCompile(`\s+`)
 
-// normalizeTitle พยายามดึง "ชื่อเรื่องจริง" ออกจากชื่อไฟล์ โดยตัดเลขตอน/แท็กคุณภาพ/วงเล็บออก
-// ผลลัพธ์เป็นตัวพิมพ์เล็กทั้งหมด ใช้สำหรับเทียบความคล้ายเท่านั้น (ไม่ใช้แสดงผลตรง ๆ)
-func normalizeTitle(fileName string) string {
+// seasonThRe จับ "ซีซั่น 2" (ไม่ใช้ \b เพราะ regexp ของ Go นับขอบเขตคำแบบ ASCII
+// ไม่รู้จักตัวอักษรไทยเป็น word character ทำให้ \b ใช้กับข้อความไทยไม่ได้ผลตามที่ต้องการ)
+var seasonThRe = regexp.MustCompile(`ซีซั่น\.?\s*(\d{1,2})`)
+
+// seasonEnRe จับ "season 2" หรือ "ss2" / "ss 2"
+var seasonEnRe = regexp.MustCompile(`(?i)\b(?:season|ss)\.?\s*(\d{1,2})\b`)
+
+// extractSeason ดึงเลขซีซั่นออกจากชื่อไฟล์ (ถ้ามี) แล้วคืนชื่อที่ตัดคำระบุซีซั่นออกแล้ว + เลขซีซั่น
+// คืนเลขซีซั่น 0 หมายถึงไม่พบ/ไม่ได้ระบุซีซั่น
+func extractSeason(name string) (string, int) {
+	if m := seasonThRe.FindStringSubmatch(name); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return seasonThRe.ReplaceAllString(name, " "), n
+		}
+	}
+	if m := seasonEnRe.FindStringSubmatch(name); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return seasonEnRe.ReplaceAllString(name, " "), n
+		}
+	}
+	return name, 0
+}
+
+// normalizeTitle พยายามดึง "ชื่อเรื่องจริง" ออกจากชื่อไฟล์ โดยตัดเลขตอน/แท็กคุณภาพ/วงเล็บ/เลขซีซั่นออก
+// คืนค่าเป็น (ชื่อเรื่องล้วน ๆ ตัวพิมพ์เล็ก, เลขซีซั่นที่เจอ) ใช้สำหรับเทียบความคล้ายเท่านั้น (ไม่ใช้แสดงผลตรง ๆ)
+func normalizeTitle(fileName string) (string, int) {
 	name := strings.TrimSuffix(fileName, filepath.Ext(fileName))
 	name = strings.ToLower(name)
+
+	// ดึงเลขซีซั่นออกไปเก็บต่างหากก่อน ไม่ให้โดนลบทิ้งปนกับเลขตอนทีหลัง
+	name, season := extractSeason(name)
 
 	name = bracketRe.ReplaceAllString(name, " ")
 	name = seasonEpRe.ReplaceAllString(name, " ")
@@ -50,7 +77,7 @@ func normalizeTitle(fileName string) string {
 	name = loneNumberRe.ReplaceAllString(name, " ") // เลขตอนที่หลงเหลืออยู่เดี่ยว ๆ
 	name = strings.TrimSpace(multiSpaceRe.ReplaceAllString(name, " "))
 
-	return name
+	return name, season
 }
 
 // toDisplayTitle แปลงชื่อที่ normalize แล้วให้อ่านง่ายขึ้น สำหรับใช้ตั้งชื่อโฟลเดอร์
@@ -127,27 +154,30 @@ func similarEnough(a, b string) bool {
 }
 
 // GroupEpisodesByName จัดกลุ่ม episode ที่ชื่อไฟล์ (หลังตัดเลขตอน/แท็กออก) คล้ายกันเข้าด้วยกัน
-// คืนค่าเป็น map[ชื่อที่เดาไว้]episode ในกลุ่มนั้น
+// ไฟล์จะถูกจัดกลุ่มเดียวกันได้ก็ต่อเมื่อ "ชื่อเรื่องคล้ายกัน" และ "เลขซีซั่นตรงกันเป๊ะ" เท่านั้น
+// (ไม่ fuzzy เลขซีซั่น เพื่อไม่ให้ Season 1 กับ Season 2 ถูกรวมกันผิด ๆ)
+// คืนค่าเป็น map[ชื่อโฟลเดอร์ที่เสนอ]episode ในกลุ่มนั้น
 func GroupEpisodesByName(episodes []*Episode) map[string][]*Episode {
 	type cluster struct {
-		key string
-		eps []*Episode
+		titleKey string
+		season   int
+		eps      []*Episode
 	}
 	var clusters []*cluster
 	for _, ep := range episodes {
-		norm := normalizeTitle(ep.FileName)
-		if norm == "" {
+		titleKey, season := normalizeTitle(ep.FileName)
+		if titleKey == "" {
 			continue
 		}
 		var target *cluster
 		for _, c := range clusters {
-			if similarEnough(c.key, norm) {
+			if c.season == season && similarEnough(c.titleKey, titleKey) {
 				target = c
 				break
 			}
 		}
 		if target == nil {
-			clusters = append(clusters, &cluster{key: norm, eps: []*Episode{ep}})
+			clusters = append(clusters, &cluster{titleKey: titleKey, season: season, eps: []*Episode{ep}})
 		} else {
 			target.eps = append(target.eps, ep)
 		}
@@ -155,7 +185,10 @@ func GroupEpisodesByName(episodes []*Episode) map[string][]*Episode {
 
 	result := map[string][]*Episode{}
 	for _, c := range clusters {
-		display := toDisplayTitle(c.key)
+		display := toDisplayTitle(c.titleKey)
+		if c.season > 0 {
+			display = fmt.Sprintf("%s Season %d", display, c.season)
+		}
 		result[display] = append(result[display], c.eps...)
 	}
 	return result
