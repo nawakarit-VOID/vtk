@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -35,7 +38,10 @@ func main() {
 	scanBtn := widget.NewButtonWithIcon("สแกนโฟลเดอร์", theme.FolderOpenIcon(), func() {
 		state.chooseAndScan()
 	})
-	toolbar := container.NewHBox(scanBtn)
+	organizeBtn := widget.NewButton("จัดกลุ่มไฟล์ชื่อคล้ายกัน", func() {
+		state.organizeSimilar()
+	})
+	toolbar := container.NewHBox(scanBtn, organizeBtn)
 
 	state.seriesList = widget.NewList(
 		func() int { return len(state.lib.SeriesList) },
@@ -105,6 +111,113 @@ func main() {
 	content := container.NewBorder(toolbar, nil, nil, nil, split)
 	w.SetContent(content)
 	w.ShowAndRun()
+}
+
+// organizeSimilar วิเคราะห์ episode ในซีรีส์ที่เลือกอยู่ หาไฟล์ที่ชื่อคล้ายกัน
+// แล้วเสนอให้ผู้ใช้ยืนยันก่อนย้ายไฟล์จริงเข้าโฟลเดอร์ใหม่
+func (s *appState) organizeSimilar() {
+	if s.selectedIdx < 0 || s.selectedIdx >= len(s.lib.SeriesList) {
+		dialog.ShowInformation("จัดกลุ่มไฟล์", "กรุณาเลือกซีรีส์ทางซ้ายก่อน", s.win)
+		return
+	}
+	series := s.lib.SeriesList[s.selectedIdx]
+
+	proposals := BuildProposals(series.Episodes)
+	if len(proposals) == 0 {
+		dialog.ShowInformation("จัดกลุ่มไฟล์", "ไม่พบไฟล์ที่ชื่อคล้ายกันมากพอที่จะจัดกลุ่มในซีรีส์นี้", s.win)
+		return
+	}
+
+	var b strings.Builder
+	b.WriteString("จะสร้างโฟลเดอร์และย้ายไฟล์ดังนี้:\n\n")
+	for _, p := range proposals {
+		fmt.Fprintf(&b, "📁 %s  (%d ไฟล์)\n", p.FolderName, len(p.Episodes))
+		for _, e := range p.Episodes {
+			fmt.Fprintf(&b, "    - %s\n", e.FileName)
+		}
+		b.WriteString("\n")
+	}
+
+	preview := widget.NewLabel(b.String())
+	preview.Wrapping = fyne.TextWrapWord
+	scroll := container.NewVScroll(preview)
+	scroll.SetMinSize(fyne.NewSize(520, 420))
+
+	confirmDialog := dialog.NewCustomConfirm(
+		"จัดกลุ่มไฟล์ที่ชื่อคล้ายกัน", "ย้ายไฟล์", "ยกเลิก",
+		scroll,
+		func(ok bool) {
+			if !ok {
+				return
+			}
+			if err := s.applyGrouping(series, proposals); err != nil {
+				dialog.ShowError(err, s.win)
+			}
+			s.seriesList.Refresh()
+			s.episodeList.Refresh()
+		},
+		s.win,
+	)
+	confirmDialog.Resize(fyne.NewSize(560, 480))
+	confirmDialog.Show()
+}
+
+// applyGrouping ย้ายไฟล์จริงตาม proposals แต่ละกลุ่ม สร้างโฟลเดอร์ย่อยใต้ series.RootPath
+// อัปเดต path ของ episode และปรับ Library ให้ตรงกับโครงสร้างไฟล์ใหม่ (สถานะดูแล้วจะติดไปกับไฟล์)
+func (s *appState) applyGrouping(orig *Series, proposals []GroupProposal) error {
+	movedSet := map[*Episode]bool{}
+
+	for _, p := range proposals {
+		folderName := sanitizeFolderName(p.FolderName)
+		newDir := filepath.Join(orig.RootPath, folderName)
+		if err := os.MkdirAll(newDir, 0755); err != nil {
+			return err
+		}
+
+		var target *Series
+		for _, sr := range s.lib.SeriesList {
+			if sr.RootPath == newDir {
+				target = sr
+				break
+			}
+		}
+		if target == nil {
+			target = &Series{Name: folderName, RootPath: newDir}
+			s.lib.SeriesList = append(s.lib.SeriesList, target)
+		}
+
+		for _, ep := range p.Episodes {
+			newPath := filepath.Join(newDir, ep.FileName)
+			if ep.FilePath != newPath {
+				if err := os.Rename(ep.FilePath, newPath); err != nil {
+					return fmt.Errorf("ย้ายไฟล์ %s ไม่สำเร็จ: %w", ep.FileName, err)
+				}
+				ep.FilePath = newPath
+			}
+			target.Episodes = append(target.Episodes, ep)
+			movedSet[ep] = true
+		}
+	}
+
+	var remaining []*Episode
+	for _, ep := range orig.Episodes {
+		if !movedSet[ep] {
+			remaining = append(remaining, ep)
+		}
+	}
+	orig.Episodes = remaining
+
+	if len(orig.Episodes) == 0 {
+		var newList []*Series
+		for _, sr := range s.lib.SeriesList {
+			if sr != orig {
+				newList = append(newList, sr)
+			}
+		}
+		s.lib.SeriesList = newList
+	}
+
+	return SaveLibrary(s.lib)
 }
 
 func (s *appState) chooseAndScan() {

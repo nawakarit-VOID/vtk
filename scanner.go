@@ -17,11 +17,11 @@ var videoExtensions = map[string]bool{
 
 // ลำดับ pattern สำหรับดึงเลขตอนจากชื่อไฟล์ (ลองตามลำดับ ตัวแรกที่ match คือคำตอบ)
 var epPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)S\d{1,2}E(\d{1,4})`),        // S01E12
-	regexp.MustCompile(`(?i)EP?[\s._-]?(\d{1,4})`),      // EP12, E12, ep 12
-	regexp.MustCompile(`[\[\(]\s*(\d{1,4})\s*[\]\)]`),   // [12] หรือ (12)
-	regexp.MustCompile(`(\d{1,4})\s*$`),                  // เลขท้ายชื่อไฟล์ (ไม่รวมนามสกุล)
-	regexp.MustCompile(`(\d{1,4})`),                      // fallback: เลขตัวแรกที่เจอ
+	regexp.MustCompile(`(?i)S\d{1,2}E(\d{1,4})`),      // S01E12
+	regexp.MustCompile(`(?i)EP?[\s._-]?(\d{1,4})`),    // EP12, E12, ep 12
+	regexp.MustCompile(`[\[\(]\s*(\d{1,4})\s*[\]\)]`), // [12] หรือ (12)
+	regexp.MustCompile(`(\d{1,4})\s*$`),               // เลขท้ายชื่อไฟล์ (ไม่รวมนามสกุล)
+	regexp.MustCompile(`(\d{1,4})`),                   // fallback: เลขตัวแรกที่เจอ
 }
 
 func ExtractEpisodeNumber(fileName string) int {
