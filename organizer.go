@@ -21,7 +21,7 @@ var qualityTags = []string{
 	"10bit", "8bit", "dual audio", "dualaudio",
 	"repack", "proper", "uncensored", "uncut",
 	"ตอน", "ตอนที่", "ที่", "พากย์ไทย", "ดูหนัง", "เต็มเรื่อง",
-	"ดูซีรี่ย์",
+	"ดูซีรี่ย์", "ดูหนังฟรี", "หนังออนไลน์", "ดูออนไลน์",
 }
 
 // qualityTagRes คือ qualityTags ที่คอมไพล์เป็น regex case-insensitive ไว้ล่วงหน้า
@@ -100,7 +100,7 @@ func normalizeTitle(fileName string) (string, int) {
 
 // stripTrailingEpisodeNumber ตัดเลขตอน (ที่รู้ค่าแน่นอนอยู่แล้วจากตอน scan) ออกจากท้ายชื่อ
 // ตัดเฉพาะตอนที่มันอยู่ท้ายสุดของชื่อ (หลัง trim) เท่านั้น เพื่อไม่ไปพลาดตัดเลขซีซั่นที่อยู่กลางชื่อ
-// เช่น "Rick and Morty Season 9 ริค แอนด์ มอร์ตี้ ปี 9   6" -> ตัด "6" ท้ายสุดออก เหลือเลขซีซั่น 9 ไว้ครบ
+// เช่น "Rick Season 9 ริค ปี 9   6" -> ตัด "6" ท้ายสุดออก เหลือเลขซีซั่น 9 ไว้ครบ
 // รองรับเลขตอนที่เติมศูนย์นำหน้าด้วย เช่น epNum=6 ต้องตัด "06" หรือ "006" ที่อยู่ท้ายชื่อได้เช่นกัน
 // (ถ้าใช้ \b6\b ตรง ๆ จะไม่เจอ เพราะ "0" กับ "6" ใน "06" เป็นตัวอักษรกลุ่มเดียวกัน ไม่มีขอบเขตคำคั่นกลาง)
 func stripTrailingEpisodeNumber(name string, epNum int) string {
@@ -121,6 +121,11 @@ func buildDisplayName(ep *Episode) string {
 
 	name = bracketRe.ReplaceAllString(name, " ")
 	name = seasonEpRe.ReplaceAllString(name, " ")
+
+	// ถ้าเจอคำมาร์คเกอร์ตอน ("ตอนที่"/"EP") ชัดเจน ถือว่าตัดเลขตอนไปพร้อมกันแล้ว
+	// ไม่ต้องพึ่ง fallback อีก เพราะถ้ารันซ้ำอาจไปตัดเลขซีซั่นที่เหลืออยู่ท้ายชื่อผิด ๆ
+	// ในกรณีที่เลขตอนบังเอิญตรงกับเลขซีซั่น (เช่น ซีซั่น 9 ตอนที่ 9)
+	hasExplicitMarker := epTokenRe.MatchString(name) || thEpTokenRe.MatchString(name)
 	name = epTokenRe.ReplaceAllString(name, " ")
 	name = thEpTokenRe.ReplaceAllString(name, " ")
 
@@ -130,7 +135,11 @@ func buildDisplayName(ep *Episode) string {
 
 	name = separatorRe.ReplaceAllString(name, " ")
 	name = strings.TrimSpace(multiSpaceRe.ReplaceAllString(name, " "))
-	name = stripTrailingEpisodeNumber(name, ep.EpisodeNumber) // fallback: เผื่อไม่มีคำว่า "ตอน"/"EP" นำหน้าเลย มีแต่เลขลอย ๆ ท้ายชื่อ
+
+	if !hasExplicitMarker {
+		// fallback: เผื่อไม่มีคำว่า "ตอน"/"EP" นำหน้าเลย มีแต่เลขลอย ๆ ท้ายชื่อ
+		name = stripTrailingEpisodeNumber(name, ep.EpisodeNumber)
+	}
 
 	if name == "" {
 		return "untitled"
