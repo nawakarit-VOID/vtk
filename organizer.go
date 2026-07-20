@@ -40,6 +40,8 @@ func compileQualityTagRes() []*regexp.Regexp {
 var bracketRe = regexp.MustCompile(`[\[\(\{][^\]\)\}]*[\]\)\}]`)
 var seasonEpRe = regexp.MustCompile(`(?i)s\d{1,2}e\d{1,4}`)         // S01E12 แบบโค้ดรวม (ไม่ใช่ตัวหนังสือ)
 var epTokenRe = regexp.MustCompile(`(?i)\bep?\.?[\s._-]?\d{1,4}\b`) // EP12 / E12
+var thEpTokenRe = regexp.MustCompile(`(?:ตอนที่|ตอน)\.?\s*\d{1,4}`) // ตอนที่ 6 / ตอน 06 (ตัดคำ+เลขเป็นก้อนเดียว
+// เหมือน epTokenRe ของฝั่งอังกฤษ จะได้ไม่ต้องพึ่งการจับคู่เลขตอนแบบเป๊ะทีหลัง ซึ่งพังง่ายเวลาเลขมีศูนย์นำหน้า เช่น "06")
 var separatorRe = regexp.MustCompile(`[._\-]+`)
 var loneNumberRe = regexp.MustCompile(`\b\d{1,4}\b`)
 var multiSpaceRe = regexp.MustCompile(`\s+`)
@@ -83,6 +85,7 @@ func normalizeTitle(fileName string) (string, int) {
 	name = bracketRe.ReplaceAllString(name, " ")
 	name = seasonEpRe.ReplaceAllString(name, " ")
 	name = epTokenRe.ReplaceAllString(name, " ")
+	name = thEpTokenRe.ReplaceAllString(name, " ")
 
 	for _, tag := range qualityTags {
 		name = strings.ReplaceAll(name, tag, " ")
@@ -119,6 +122,7 @@ func buildDisplayName(ep *Episode) string {
 	name = bracketRe.ReplaceAllString(name, " ")
 	name = seasonEpRe.ReplaceAllString(name, " ")
 	name = epTokenRe.ReplaceAllString(name, " ")
+	name = thEpTokenRe.ReplaceAllString(name, " ")
 
 	for _, re := range qualityTagRes {
 		name = re.ReplaceAllString(name, " ")
@@ -126,7 +130,7 @@ func buildDisplayName(ep *Episode) string {
 
 	name = separatorRe.ReplaceAllString(name, " ")
 	name = strings.TrimSpace(multiSpaceRe.ReplaceAllString(name, " "))
-	name = stripTrailingEpisodeNumber(name, ep.EpisodeNumber)
+	name = stripTrailingEpisodeNumber(name, ep.EpisodeNumber) // fallback: เผื่อไม่มีคำว่า "ตอน"/"EP" นำหน้าเลย มีแต่เลขลอย ๆ ท้ายชื่อ
 
 	if name == "" {
 		return "untitled"
