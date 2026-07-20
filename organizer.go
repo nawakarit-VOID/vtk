@@ -98,12 +98,14 @@ func normalizeTitle(fileName string) (string, int) {
 // stripTrailingEpisodeNumber ตัดเลขตอน (ที่รู้ค่าแน่นอนอยู่แล้วจากตอน scan) ออกจากท้ายชื่อ
 // ตัดเฉพาะตอนที่มันอยู่ท้ายสุดของชื่อ (หลัง trim) เท่านั้น เพื่อไม่ไปพลาดตัดเลขซีซั่นที่อยู่กลางชื่อ
 // เช่น "Rick and Morty Season 9 ริค แอนด์ มอร์ตี้ ปี 9   6" -> ตัด "6" ท้ายสุดออก เหลือเลขซีซั่น 9 ไว้ครบ
+// รองรับเลขตอนที่เติมศูนย์นำหน้าด้วย เช่น epNum=6 ต้องตัด "06" หรือ "006" ที่อยู่ท้ายชื่อได้เช่นกัน
+// (ถ้าใช้ \b6\b ตรง ๆ จะไม่เจอ เพราะ "0" กับ "6" ใน "06" เป็นตัวอักษรกลุ่มเดียวกัน ไม่มีขอบเขตคำคั่นกลาง)
 func stripTrailingEpisodeNumber(name string, epNum int) string {
 	trimmed := strings.TrimSpace(name)
 	if epNum <= 0 {
 		return trimmed
 	}
-	re := regexp.MustCompile(`\b` + strconv.Itoa(epNum) + `\b\s*$`)
+	re := regexp.MustCompile(`\b0*` + strconv.Itoa(epNum) + `\b\s*$`)
 	trimmed = re.ReplaceAllString(trimmed, "")
 	return strings.TrimSpace(trimmed)
 }
