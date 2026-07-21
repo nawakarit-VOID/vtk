@@ -145,6 +145,7 @@ func MergeScan(lib *Library, scanned []*Series, rootPath string) {
 			continue
 		}
 		existing.RootPath = scannedSeries.RootPath
+		existing.IsRoot = scannedSeries.IsRoot
 
 		existingByPath := map[string]*Episode{}
 		for _, e := range existing.Episodes {
