@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -35,6 +36,7 @@ func main() {
 	if err != nil {
 		lib = &Library{}
 	}
+	sortSeriesForDisplay(lib.SeriesList)
 
 	state := &appState{lib: lib, win: w, selectedIdx: -1}
 
@@ -156,6 +158,8 @@ func (s *appState) organizeSimilar() {
 			if err := s.applyGrouping(series, proposals); err != nil {
 				dialog.ShowError(err, s.win)
 			}
+			sortSeriesForDisplay(s.lib.SeriesList)
+			s.selectedIdx = -1 // โครงสร้างซีรีส์เปลี่ยนไปแล้ว (แยก/ย้ายไฟล์) ตำแหน่งเดิมใช้ไม่ได้อีกต่อไป
 			s.seriesList.Refresh()
 			s.episodeList.Refresh()
 		},
@@ -241,10 +245,23 @@ func (s *appState) chooseAndScan() {
 			return
 		}
 		MergeScan(s.lib, scanned, path)
+		sortSeriesForDisplay(s.lib.SeriesList)
+		s.selectedIdx = -1 // ลำดับซีรีส์เปลี่ยนไปแล้ว ตำแหน่งที่เคยเลือกไว้ไม่ตรงของเดิมอีกต่อไป
 		if err := SaveLibrary(s.lib); err != nil {
 			dialog.ShowError(err, s.win)
 		}
 		s.seriesList.Refresh()
 		s.episodeList.Refresh()
 	}, s.win)
+}
+
+// sortSeriesForDisplay จัดลำดับซีรีส์สำหรับแสดงผล: โฟลเดอร์แม่ (IsRoot) มาก่อนเสมอ
+// ไม่ว่าจะเคยสแกนมากี่รอบก็ตาม ส่วนที่เหลือเรียงตามตัวอักษร
+func sortSeriesForDisplay(list []*Series) {
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].IsRoot != list[j].IsRoot {
+			return list[i].IsRoot
+		}
+		return list[i].Name < list[j].Name
+	})
 }

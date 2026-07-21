@@ -16,6 +16,7 @@ type Episode struct {
 type Series struct {
 	Name     string     `json:"name"`
 	RootPath string     `json:"root_path"`
+	IsRoot   bool       `json:"is_root"` // true = ไฟล์หลวม ๆ ที่อยู่ตรงโฟลเดอร์แม่ (ตัวที่กดสแกน) โดยตรง ไม่ใช่โฟลเดอร์ย่อย
 	Episodes []*Episode `json:"episodes"`
 }
 
