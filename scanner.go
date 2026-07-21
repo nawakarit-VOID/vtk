@@ -125,7 +125,8 @@ func scanSeriesFolder(name, path string) (*Series, error) {
 // MergeScan รวมผลสแกนใหม่เข้ากับข้อมูลเดิม โดย:
 //   - ไฟล์ที่ยังเจอ -> อัปเดตข้อมูล และคงสถานะ Watched เดิมไว้
 //   - ไฟล์ใหม่ที่ไม่เคยเจอ -> เพิ่มเป็นตอนใหม่ (ยังไม่ดู)
-//   - ไฟล์ที่เคยมีแต่ตอนนี้หายไป -> คงไว้ในลิสต์ (เก็บประวัติ) แต่ตั้ง Exists = false
+//   - ไฟล์เดี่ยว ๆ ที่เคยมีแต่ตอนนี้หายไป (แต่โฟลเดอร์ซีรีส์ยังอยู่) -> คงไว้ในลิสต์ (เก็บประวัติ) แต่ตั้ง Exists = false
+//   - ทั้งโฟลเดอร์ซีรีส์หายไปทั้งโฟลเดอร์ (ไม่เจอเลยในการสแกนรอบนี้) -> เอาซีรีส์นั้นออกจากลิสต์ไปเลย ไม่เก็บประวัติ
 func MergeScan(lib *Library, scanned []*Series, rootPath string) {
 	existingBySeries := map[string]*Series{}
 	for _, s := range lib.SeriesList {
@@ -175,16 +176,15 @@ func MergeScan(lib *Library, scanned []*Series, rootPath string) {
 		})
 	}
 
-	// ซีรีส์เดิมที่อยู่ในโฟลเดอร์ที่สแกนรอบนี้ แต่ไม่เจอเลยในรอบนี้ -> ไฟล์ในนั้นถือว่าถูกลบหมด
+	// ซีรีส์เดิมที่อยู่ในโฟลเดอร์ที่สแกนรอบนี้ (ตาม rootPath) แต่ไม่เจอเลยในรอบนี้
+	// -> ทั้งโฟลเดอร์หายไปแล้ว เอาซีรีส์นั้นออกจากลิสต์ไปเลย ไม่ต้องเก็บประวัติ
+	var kept []*Series
 	for _, existing := range lib.SeriesList {
-		if _, found := scannedBySeries[existing.Name]; !found {
-			if strings.HasPrefix(existing.RootPath, rootPath) {
-				for _, e := range existing.Episodes {
-					if strings.HasPrefix(e.FilePath, rootPath) {
-						e.Exists = false
-					}
-				}
-			}
+		_, found := scannedBySeries[existing.Name]
+		if !found && strings.HasPrefix(existing.RootPath, rootPath) {
+			continue // ทั้งโฟลเดอร์หายไปทั้งโฟลเดอร์ -> ตัดออกจากลิสต์
 		}
+		kept = append(kept, existing)
 	}
+	lib.SeriesList = kept
 }
