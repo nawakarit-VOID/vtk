@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Nawakarit
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License v3.0.
+// Copyright (c) 2026 Nawakarit
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License v3.0.
 package main
 
 import (
@@ -47,14 +50,15 @@ func isVideoFile(name string) bool {
 }
 
 // ScanFolder สแกน rootPath: แต่ละโฟลเดอร์ย่อยกลายเป็น 1 ซีรีส์
-// ไฟล์วิดีโอที่อยู่ตรง rootPath โดยตรง จะถูกจัดกลุ่มเป็นซีรีส์เดียวชื่อเดียวกับ rootPath
+// ไฟล์วิดีโอที่อยู่ตรง rootPath โดยตรง (ไม่ได้อยู่ในโฟลเดอร์ย่อย) จะถูกจัดเป็น "โฟลเดอร์แม่"
+// และแสดงไว้บนสุดของผลลัพธ์เสมอ แยกออกจากโฟลเดอร์ย่อยอื่น ๆ ที่เรียงตามตัวอักษร
 func ScanFolder(rootPath string) ([]*Series, error) {
 	entries, err := os.ReadDir(rootPath)
 	if err != nil {
 		return nil, err
 	}
 
-	var seriesList []*Series
+	var subSeries []*Series
 	var rootFiles []*Episode
 
 	for _, entry := range entries {
@@ -65,7 +69,7 @@ func ScanFolder(rootPath string) ([]*Series, error) {
 				continue
 			}
 			if len(s.Episodes) > 0 {
-				seriesList = append(seriesList, s)
+				subSeries = append(subSeries, s)
 			}
 		} else if isVideoFile(entry.Name()) {
 			rootFiles = append(rootFiles, &Episode{
@@ -77,6 +81,12 @@ func ScanFolder(rootPath string) ([]*Series, error) {
 		}
 	}
 
+	// เรียงโฟลเดอร์ย่อยตามตัวอักษร (ไม่รวมโฟลเดอร์แม่)
+	sort.Slice(subSeries, func(i, j int) bool { return subSeries[i].Name < subSeries[j].Name })
+
+	var seriesList []*Series
+
+	// โฟลเดอร์แม่ (ไฟล์หลวม ๆ ตรง root) มาก่อนเสมอ ถ้ามี
 	if len(rootFiles) > 0 {
 		sort.Slice(rootFiles, func(i, j int) bool { return rootFiles[i].EpisodeNumber < rootFiles[j].EpisodeNumber })
 		seriesList = append(seriesList, &Series{
@@ -86,7 +96,8 @@ func ScanFolder(rootPath string) ([]*Series, error) {
 		})
 	}
 
-	sort.Slice(seriesList, func(i, j int) bool { return seriesList[i].Name < seriesList[j].Name })
+	seriesList = append(seriesList, subSeries...)
+
 	return seriesList, nil
 }
 

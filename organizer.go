@@ -21,7 +21,7 @@ var qualityTags = []string{
 	"10bit", "8bit", "dual audio", "dualaudio",
 	"repack", "proper", "uncensored", "uncut",
 	"ตอน", "ตอนที่", "ที่", "พากย์ไทย", "ดูหนัง", "เต็มเรื่อง",
-	"ดูซีรี่ย์", "ดูหนังฟรี", "หนังออนไลน์", "ดูออนไลน์",
+	"ดูซีรี่ย์", "ดูหนังฟรี", "หนังออนไลน์", "ดูออนไลน์", "หนัง",
 }
 
 // qualityTagRes คือ qualityTags ที่คอมไพล์เป็น regex case-insensitive ไว้ล่วงหน้า
