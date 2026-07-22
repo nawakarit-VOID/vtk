@@ -367,6 +367,9 @@ func (s *appState) confirmDeleteSeries() {
 			"• ลบแค่ลิสต์ = เอาออกจากรายการติดตาม ไฟล์/โฟลเดอร์บนดิสก์ยังอยู่เหมือนเดิม",
 		series.Name, realDesc,
 	)
+	if series.IsRoot {
+		msg += "\n\n(นี่คือโฟลเดอร์แม่ ซีรีส์ย่อยที่อยู่ในโฟลเดอร์นี้จะถูกเอาออกจากลิสต์ติดตามไปด้วย ไม่ว่าจะเลือกลบแบบไหนก็ตาม)"
+	}
 
 	showDeleteChoiceDialog(s.win, "ลบซีรีส์", msg,
 		func() {
@@ -395,12 +398,18 @@ func (s *appState) confirmDeleteSeries() {
 }
 
 // removeSeriesFromLibrary เอาซีรีส์ออกจาก library เท่านั้น (ไม่แตะไฟล์บนดิสก์)
+// ถ้าซีรีส์นี้เป็นโฟลเดอร์แม่ (IsRoot) จะเอาซีรีส์ย่อยที่อยู่ใต้โฟลเดอร์แม่นี้ออกจากลิสต์ไปด้วย
+// (เอาออกจากลิสต์เท่านั้น ไม่ลบไฟล์/โฟลเดอร์จริงของลูกแต่อย่างใด)
 func (s *appState) removeSeriesFromLibrary(series *Series) {
 	var newList []*Series
 	for _, sr := range s.lib.SeriesList {
-		if sr != series {
-			newList = append(newList, sr)
+		if sr == series {
+			continue
 		}
+		if series.IsRoot && isUnderRoot(sr.RootPath, series.RootPath) {
+			continue
+		}
+		newList = append(newList, sr)
 	}
 	s.lib.SeriesList = newList
 	s.selectedIdx = -1
@@ -410,6 +419,15 @@ func (s *appState) removeSeriesFromLibrary(series *Series) {
 	}
 	s.seriesList.Refresh()
 	s.episodeList.Refresh()
+}
+
+// isUnderRoot ตรวจว่า path อยู่ใต้ root หรือไม่ (เป็นโฟลเดอร์ย่อยจริง ๆ ไม่ใช่แค่ขึ้นต้นด้วยตัวอักษรคล้ายกัน)
+func isUnderRoot(path, root string) bool {
+	sep := string(os.PathSeparator)
+	if !strings.HasSuffix(root, sep) {
+		root += sep
+	}
+	return strings.HasPrefix(path, root)
 }
 
 // sortSeriesForDisplay จัดลำดับซีรีส์สำหรับแสดงผล: โฟลเดอร์แม่ (IsRoot) มาก่อนเสมอ
