@@ -322,12 +322,8 @@ func (s *appState) confirmDeleteSeries() {
 
 	var msg string
 	if series.IsRoot {
-		msg = fmt.Sprintf(
-			"นี่คือ \"โฟลเดอร์แม่\" (ไฟล์หลวม ๆ ตรง root) จะลบเฉพาะไฟล์วิดีโอทั้งหมด %d ไฟล์ในนี้ออกจากดิสก์จริง\n"+
-				"(ไฟล์อื่นที่ไม่ใช่วิดีโอในโฟลเดอร์เดียวกันจะไม่ถูกแตะต้อง)\n\n"+
-				"การกระทำนี้ย้อนกลับไม่ได้ ต้องการดำเนินการต่อหรือไม่?",
-			series.TotalCount(),
-		)
+		msg = "นี่คือ \"โฟลเดอร์แม่\" (ไฟล์หลวม ๆ ตรง root) จะเอาออกจากลิสต์ที่ติดตามอยู่เท่านั้น " +
+			"ไม่ลบไฟล์หรือโฟลเดอร์จริงในดิสก์แต่อย่างใด\n\nต้องการดำเนินการต่อหรือไม่?"
 	} else {
 		msg = fmt.Sprintf(
 			"จะลบโฟลเดอร์ \"%s\" ทั้งโฟลเดอร์ออกจากดิสก์จริง (รวมไฟล์ทั้งหมด %d ไฟล์ข้างใน)\n\n"+
@@ -353,21 +349,12 @@ func (s *appState) confirmDeleteSeries() {
 	confirmDialog.Show()
 }
 
-// deleteSeries ลบไฟล์/โฟลเดอร์จริงในดิสก์ แล้วเอาซีรีส์นี้ออกจาก library
-//   - ถ้าเป็นโฟลเดอร์แม่ (IsRoot): ลบทีละไฟล์วิดีโอเท่านั้น ไม่ลบทั้งโฟลเดอร์ root ทิ้ง
+// deleteSeries เอาซีรีส์นี้ออกจาก library
+//   - ถ้าเป็นโฟลเดอร์แม่ (IsRoot): เอาออกจากลิสต์ที่ติดตามอยู่เท่านั้น ไม่ลบไฟล์/โฟลเดอร์จริงในดิสก์เลย
 //     เพราะโฟลเดอร์ root เป็นโฟลเดอร์ที่ผู้ใช้เลือกสแกนเอง อาจมีไฟล์อื่นที่ไม่เกี่ยวข้องปนอยู่
-//   - ถ้าเป็นโฟลเดอร์ย่อยทั่วไป: ลบทั้งโฟลเดอร์ (os.RemoveAll) เพราะเป็นโฟลเดอร์เฉพาะของซีรีส์นั้น
+//   - ถ้าเป็นโฟลเดอร์ย่อยทั่วไป: ลบทั้งโฟลเดอร์จริงในดิสก์ด้วย (os.RemoveAll) เพราะเป็นโฟลเดอร์เฉพาะของซีรีส์นั้น
 func (s *appState) deleteSeries(series *Series) error {
-	if series.IsRoot {
-		for _, ep := range series.Episodes {
-			if !ep.Exists {
-				continue
-			}
-			if err := os.Remove(ep.FilePath); err != nil && !os.IsNotExist(err) {
-				return fmt.Errorf("ลบไฟล์ %s ไม่สำเร็จ: %w", ep.FileName, err)
-			}
-		}
-	} else {
+	if !series.IsRoot {
 		if err := os.RemoveAll(series.RootPath); err != nil {
 			return fmt.Errorf("ลบโฟลเดอร์ %s ไม่สำเร็จ: %w", series.RootPath, err)
 		}
