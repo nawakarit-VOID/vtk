@@ -46,7 +46,11 @@ func main() {
 	organizeBtn := widget.NewButton("จัดกลุ่มไฟล์ชื่อคล้ายกัน", func() {
 		state.organizeSimilar()
 	})
-	toolbar := container.NewHBox(scanBtn, organizeBtn)
+	deleteSeriesBtn := widget.NewButtonWithIcon("ลบซีรีส์นี้", theme.DeleteIcon(), func() {
+		state.confirmDeleteSeries()
+	})
+	deleteSeriesBtn.Importance = widget.DangerImportance
+	toolbar := container.NewHBox(scanBtn, organizeBtn, deleteSeriesBtn)
 
 	state.seriesList = widget.NewList(
 		func() int { return len(state.lib.SeriesList) },
@@ -72,7 +76,8 @@ func main() {
 			check := widget.NewCheck("", nil)
 			label := widget.NewLabel("episode")
 			status := widget.NewLabel("")
-			return container.NewHBox(check, label, status)
+			delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
+			return container.NewHBox(check, label, status, delBtn)
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			if state.selectedIdx < 0 {
@@ -85,6 +90,7 @@ func main() {
 			check := row.Objects[0].(*widget.Check)
 			label := row.Objects[1].(*widget.Label)
 			status := row.Objects[2].(*widget.Label)
+			delBtn := row.Objects[3].(*widget.Button)
 
 			label.SetText(fmt.Sprintf("ตอน %d - %s", ep.EpisodeNumber, ep.FileName))
 			check.OnChanged = nil
@@ -93,6 +99,9 @@ func main() {
 				ep.Watched = v
 				state.seriesList.Refresh()
 				_ = SaveLibrary(state.lib)
+			}
+			delBtn.OnTapped = func() {
+				state.confirmDeleteEpisode(series, ep)
 			}
 
 			if ep.Exists {
@@ -253,6 +262,126 @@ func (s *appState) chooseAndScan() {
 		s.seriesList.Refresh()
 		s.episodeList.Refresh()
 	}, s.win)
+}
+
+// confirmDeleteEpisode ถามยืนยันก่อนลบไฟล์วิดีโอ 1 ไฟล์ (ลบจริงในดิสก์ด้วย)
+func (s *appState) confirmDeleteEpisode(series *Series, ep *Episode) {
+	msg := fmt.Sprintf("จะลบไฟล์ \"%s\" ออกจากดิสก์จริง\n\nการกระทำนี้ย้อนกลับไม่ได้ ต้องการดำเนินการต่อหรือไม่?", ep.FileName)
+	dialog.ShowConfirm("ยืนยันการลบไฟล์", msg, func(ok bool) {
+		if !ok {
+			return
+		}
+		if err := s.deleteEpisode(series, ep); err != nil {
+			dialog.ShowError(err, s.win)
+			return
+		}
+		sortSeriesForDisplay(s.lib.SeriesList)
+		s.seriesList.Refresh()
+		s.episodeList.Refresh()
+	}, s.win)
+}
+
+// deleteEpisode ลบไฟล์จริงในดิสก์ (ถ้ายังอยู่) แล้วเอา episode นี้ออกจาก library
+// ถ้าเป็นตอนสุดท้ายของซีรีส์ จะเอาซีรีส์นั้นออกจากลิสต์ไปด้วย (ไม่เหลือตอนให้แสดง)
+func (s *appState) deleteEpisode(series *Series, ep *Episode) error {
+	if ep.Exists {
+		if err := os.Remove(ep.FilePath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("ลบไฟล์ %s ไม่สำเร็จ: %w", ep.FileName, err)
+		}
+	}
+
+	var remaining []*Episode
+	for _, e := range series.Episodes {
+		if e != ep {
+			remaining = append(remaining, e)
+		}
+	}
+	series.Episodes = remaining
+
+	if len(series.Episodes) == 0 {
+		var newList []*Series
+		for _, sr := range s.lib.SeriesList {
+			if sr != series {
+				newList = append(newList, sr)
+			}
+		}
+		s.lib.SeriesList = newList
+		s.selectedIdx = -1
+	}
+
+	return SaveLibrary(s.lib)
+}
+
+// confirmDeleteSeries ถามยืนยันก่อนลบทั้งซีรีส์ที่เลือกอยู่ (ลบไฟล์/โฟลเดอร์จริงในดิสก์ด้วย)
+func (s *appState) confirmDeleteSeries() {
+	if s.selectedIdx < 0 || s.selectedIdx >= len(s.lib.SeriesList) {
+		dialog.ShowInformation("ลบซีรีส์", "กรุณาเลือกซีรีส์ทางซ้ายก่อน", s.win)
+		return
+	}
+	series := s.lib.SeriesList[s.selectedIdx]
+
+	var msg string
+	if series.IsRoot {
+		msg = fmt.Sprintf(
+			"นี่คือ \"โฟลเดอร์แม่\" (ไฟล์หลวม ๆ ตรง root) จะลบเฉพาะไฟล์วิดีโอทั้งหมด %d ไฟล์ในนี้ออกจากดิสก์จริง\n"+
+				"(ไฟล์อื่นที่ไม่ใช่วิดีโอในโฟลเดอร์เดียวกันจะไม่ถูกแตะต้อง)\n\n"+
+				"การกระทำนี้ย้อนกลับไม่ได้ ต้องการดำเนินการต่อหรือไม่?",
+			series.TotalCount(),
+		)
+	} else {
+		msg = fmt.Sprintf(
+			"จะลบโฟลเดอร์ \"%s\" ทั้งโฟลเดอร์ออกจากดิสก์จริง (รวมไฟล์ทั้งหมด %d ไฟล์ข้างใน)\n\n"+
+				"การกระทำนี้ย้อนกลับไม่ได้ ต้องการดำเนินการต่อหรือไม่?",
+			series.Name, series.TotalCount(),
+		)
+	}
+
+	confirmDialog := dialog.NewConfirm("ยืนยันการลบซีรีส์", msg, func(ok bool) {
+		if !ok {
+			return
+		}
+		if err := s.deleteSeries(series); err != nil {
+			dialog.ShowError(err, s.win)
+			return
+		}
+		s.selectedIdx = -1
+		s.seriesList.Refresh()
+		s.episodeList.Refresh()
+	}, s.win)
+	confirmDialog.SetDismissText("ยกเลิก")
+	confirmDialog.SetConfirmText("ลบ")
+	confirmDialog.Show()
+}
+
+// deleteSeries ลบไฟล์/โฟลเดอร์จริงในดิสก์ แล้วเอาซีรีส์นี้ออกจาก library
+//   - ถ้าเป็นโฟลเดอร์แม่ (IsRoot): ลบทีละไฟล์วิดีโอเท่านั้น ไม่ลบทั้งโฟลเดอร์ root ทิ้ง
+//     เพราะโฟลเดอร์ root เป็นโฟลเดอร์ที่ผู้ใช้เลือกสแกนเอง อาจมีไฟล์อื่นที่ไม่เกี่ยวข้องปนอยู่
+//   - ถ้าเป็นโฟลเดอร์ย่อยทั่วไป: ลบทั้งโฟลเดอร์ (os.RemoveAll) เพราะเป็นโฟลเดอร์เฉพาะของซีรีส์นั้น
+func (s *appState) deleteSeries(series *Series) error {
+	if series.IsRoot {
+		for _, ep := range series.Episodes {
+			if !ep.Exists {
+				continue
+			}
+			if err := os.Remove(ep.FilePath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("ลบไฟล์ %s ไม่สำเร็จ: %w", ep.FileName, err)
+			}
+		}
+	} else {
+		if err := os.RemoveAll(series.RootPath); err != nil {
+			return fmt.Errorf("ลบโฟลเดอร์ %s ไม่สำเร็จ: %w", series.RootPath, err)
+		}
+	}
+
+	var newList []*Series
+	for _, sr := range s.lib.SeriesList {
+		if sr != series {
+			newList = append(newList, sr)
+		}
+	}
+	s.lib.SeriesList = newList
+
+	return SaveLibrary(s.lib)
 }
 
 // sortSeriesForDisplay จัดลำดับซีรีส์สำหรับแสดงผล: โฟลเดอร์แม่ (IsRoot) มาก่อนเสมอ
