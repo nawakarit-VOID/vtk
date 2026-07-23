@@ -169,6 +169,7 @@ func (s *appState) organizeSimilar() {
 			}
 			sortSeriesForDisplay(s.lib.SeriesList)
 			s.selectedIdx = -1 // โครงสร้างซีรีส์เปลี่ยนไปแล้ว (แยก/ย้ายไฟล์) ตำแหน่งเดิมใช้ไม่ได้อีกต่อไป
+			s.seriesList.UnselectAll()
 			s.seriesList.Refresh()
 			s.episodeList.Refresh()
 		},
@@ -256,6 +257,7 @@ func (s *appState) chooseAndScan() {
 		MergeScan(s.lib, scanned, path)
 		sortSeriesForDisplay(s.lib.SeriesList)
 		s.selectedIdx = -1 // ลำดับซีรีส์เปลี่ยนไปแล้ว ตำแหน่งที่เคยเลือกไว้ไม่ตรงของเดิมอีกต่อไป
+		s.seriesList.UnselectAll()
 		if err := SaveLibrary(s.lib); err != nil {
 			dialog.ShowError(err, s.win)
 		}
@@ -337,6 +339,7 @@ func (s *appState) removeEpisodeFromLibrary(series *Series, ep *Episode) {
 		}
 		s.lib.SeriesList = newList
 		s.selectedIdx = -1
+		s.seriesList.UnselectAll()
 	}
 
 	if err := SaveLibrary(s.lib); err != nil {
@@ -413,6 +416,7 @@ func (s *appState) removeSeriesFromLibrary(series *Series) {
 	}
 	s.lib.SeriesList = newList
 	s.selectedIdx = -1
+	s.seriesList.UnselectAll()
 
 	if err := SaveLibrary(s.lib); err != nil {
 		dialog.ShowError(err, s.win)
