@@ -4,6 +4,8 @@
 package main
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -21,7 +23,7 @@ var qualityTags = []string{
 	"10bit", "8bit", "dual audio", "dualaudio",
 	"repack", "proper", "uncensored", "uncut",
 	"ตอน", "ตอนที่", "ที่", "พากย์ไทย", "ดูหนัง", "เต็มเรื่อง",
-	"ดูซีรี่ย์", "ดูหนังฟรี", "หนังออนไลน์", "ดูออนไลน์", "หนัง",
+	"ดูซีรี่ย์",
 }
 
 // qualityTagRes คือ qualityTags ที่คอมไพล์เป็น regex case-insensitive ไว้ล่วงหน้า
@@ -100,7 +102,7 @@ func normalizeTitle(fileName string) (string, int) {
 
 // stripTrailingEpisodeNumber ตัดเลขตอน (ที่รู้ค่าแน่นอนอยู่แล้วจากตอน scan) ออกจากท้ายชื่อ
 // ตัดเฉพาะตอนที่มันอยู่ท้ายสุดของชื่อ (หลัง trim) เท่านั้น เพื่อไม่ไปพลาดตัดเลขซีซั่นที่อยู่กลางชื่อ
-// เช่น "Rick Season 9 ริค ปี 9   6" -> ตัด "6" ท้ายสุดออก เหลือเลขซีซั่น 9 ไว้ครบ
+// เช่น "Rick and Morty Season 9 ริค แอนด์ มอร์ตี้ ปี 9   6" -> ตัด "6" ท้ายสุดออก เหลือเลขซีซั่น 9 ไว้ครบ
 // รองรับเลขตอนที่เติมศูนย์นำหน้าด้วย เช่น epNum=6 ต้องตัด "06" หรือ "006" ที่อยู่ท้ายชื่อได้เช่นกัน
 // (ถ้าใช้ \b6\b ตรง ๆ จะไม่เจอ เพราะ "0" กับ "6" ใน "06" เป็นตัวอักษรกลุ่มเดียวกัน ไม่มีขอบเขตคำคั่นกลาง)
 func stripTrailingEpisodeNumber(name string, epNum int) string {
@@ -226,9 +228,36 @@ func similarEnough(a, b string) bool {
 	return sim >= 0.82
 }
 
-// GroupEpisodesByName จัดกลุ่ม episode ที่ "แก่นชื่อเรื่องคล้ายกัน AND เลขซีซั่นตรงกันเป๊ะ" เข้าด้วยกัน
-// ชื่อโฟลเดอร์ที่ได้จะมาจาก buildDisplayName (คงคำเดิม เช่น Season/ปี ไว้) ไม่ใช่ชื่อที่ normalize แล้ว
-func GroupEpisodesByName(episodes []*Episode) map[string][]*Episode {
+// GroupProposal คือกลุ่มไฟล์ที่เสนอให้ย้ายไปรวมอยู่ในโฟลเดอร์เดียวกัน
+// ถ้า ExistingSeries ไม่ใช่ nil แปลว่ามีโฟลเดอร์ที่ชื่อคล้ายกันอยู่แล้ว ให้ย้ายเข้าโฟลเดอร์นั้นแทนที่จะสร้างใหม่
+type GroupProposal struct {
+	FolderName     string
+	Episodes       []*Episode
+	ExistingSeries *Series
+}
+
+// siblingKey คือ title+season ที่ normalize แล้วของโฟลเดอร์ย่อยที่มีอยู่แล้ว ใช้เทียบกับไฟล์หลวม ๆ
+type siblingKey struct {
+	titleKey string
+	season   int
+	series   *Series
+}
+
+// findMatchingSibling หาโฟลเดอร์ย่อยที่มีอยู่แล้วซึ่ง "ชื่อเรื่องคล้ายกัน AND เลขซีซั่นตรงกันเป๊ะ" กับ titleKey/season ที่ให้มา
+func findMatchingSibling(titleKey string, season int, siblingKeys []siblingKey) *Series {
+	for _, sk := range siblingKeys {
+		if sk.season == season && similarEnough(sk.titleKey, titleKey) {
+			return sk.series
+		}
+	}
+	return nil
+}
+
+// BuildProposals จัดกลุ่มไฟล์ที่ชื่อคล้ายกัน แล้วเสนอปลายทางให้:
+//   - ถ้ากลุ่มนั้นตรงกับโฟลเดอร์ย่อยที่มีอยู่แล้ว (siblings) -> เสนอย้ายเข้าโฟลเดอร์เดิม (แม้จะมีไฟล์เดียวในกลุ่มก็ตาม)
+//   - ถ้าไม่ตรงกับโฟลเดอร์ไหนเลย และมีไฟล์ตั้งแต่ 2 ไฟล์ขึ้นไปในกลุ่ม -> เสนอสร้างโฟลเดอร์ใหม่
+//   - กลุ่มที่มีไฟล์เดียวและไม่ตรงกับโฟลเดอร์ไหนเลย -> ข้าม (ไม่มีประโยชน์ที่จะย้าย)
+func BuildProposals(episodes []*Episode, siblings []*Series) []GroupProposal {
 	type cluster struct {
 		titleKey string
 		season   int
@@ -254,31 +283,37 @@ func GroupEpisodesByName(episodes []*Episode) map[string][]*Episode {
 		}
 	}
 
-	result := map[string][]*Episode{}
-	for _, c := range clusters {
-		display := mostCommonDisplayName(c.eps)
-		result[display] = append(result[display], c.eps...)
-	}
-	return result
-}
-
-// GroupProposal คือกลุ่มไฟล์ที่เสนอให้ย้ายไปรวมอยู่ในโฟลเดอร์เดียวกัน
-type GroupProposal struct {
-	FolderName string
-	Episodes   []*Episode
-}
-
-// BuildProposals คืนเฉพาะกลุ่มที่มีไฟล์ตั้งแต่ 2 ไฟล์ขึ้นไป (กลุ่มเดี่ยวไม่มีประโยชน์ที่จะย้าย)
-func BuildProposals(episodes []*Episode) []GroupProposal {
-	groups := GroupEpisodesByName(episodes)
-	var proposals []GroupProposal
-	for name, eps := range groups {
-		if len(eps) < 2 {
+	var siblingKeys []siblingKey
+	for _, sib := range siblings {
+		tk, sn := normalizeTitle(sib.Name)
+		if tk == "" {
 			continue
 		}
-		sort.Slice(eps, func(i, j int) bool { return eps[i].EpisodeNumber < eps[j].EpisodeNumber })
-		proposals = append(proposals, GroupProposal{FolderName: name, Episodes: eps})
+		siblingKeys = append(siblingKeys, siblingKey{titleKey: tk, season: sn, series: sib})
 	}
+
+	var proposals []GroupProposal
+	for _, c := range clusters {
+		matched := findMatchingSibling(c.titleKey, c.season, siblingKeys)
+
+		if matched == nil && len(c.eps) < 2 {
+			continue // กลุ่มเดี่ยว ไม่มีโฟลเดอร์เดิมให้ย้ายเข้า ไม่มีประโยชน์ที่จะย้าย
+		}
+
+		sort.Slice(c.eps, func(i, j int) bool { return c.eps[i].EpisodeNumber < c.eps[j].EpisodeNumber })
+
+		folderName := mostCommonDisplayName(c.eps)
+		if matched != nil {
+			folderName = matched.Name // ใช้ชื่อโฟลเดอร์เดิมที่มีอยู่แล้วโชว์ในพรีวิว
+		}
+
+		proposals = append(proposals, GroupProposal{
+			FolderName:     folderName,
+			Episodes:       c.eps,
+			ExistingSeries: matched,
+		})
+	}
+
 	sort.Slice(proposals, func(i, j int) bool { return proposals[i].FolderName < proposals[j].FolderName })
 	return proposals
 }
@@ -293,4 +328,19 @@ func sanitizeFolderName(name string) string {
 		clean = "untitled"
 	}
 	return clean
+}
+
+// uniqueDestPath คืน path ปลายทางที่ไม่ชนกับไฟล์ที่มีอยู่แล้วในโฟลเดอร์ dir
+// ถ้าชื่อไฟล์ซ้ำ จะเติม " (1)", " (2)", ... ต่อท้าย (ก่อนนามสกุล) ให้อัตโนมัติ
+func uniqueDestPath(dir, fileName string) string {
+	ext := filepath.Ext(fileName)
+	base := strings.TrimSuffix(fileName, ext)
+
+	candidate := filepath.Join(dir, fileName)
+	for i := 1; ; i++ {
+		if _, err := os.Stat(candidate); os.IsNotExist(err) {
+			return candidate
+		}
+		candidate = filepath.Join(dir, fmt.Sprintf("%s (%d)%s", base, i, ext))
+	}
 }

@@ -147,16 +147,30 @@ func (s *appState) organizeSimilar() {
 	}
 	series := s.lib.SeriesList[s.selectedIdx]
 
-	proposals := BuildProposals(series.Episodes)
+	var siblings []*Series
+	for _, sr := range s.lib.SeriesList {
+		if sr == series || sr.IsRoot {
+			continue
+		}
+		if filepath.Dir(sr.RootPath) == series.RootPath {
+			siblings = append(siblings, sr)
+		}
+	}
+
+	proposals := BuildProposals(series.Episodes, siblings)
 	if len(proposals) == 0 {
 		dialog.ShowInformation("จัดกลุ่มไฟล์", "ไม่พบไฟล์ที่ชื่อคล้ายกันมากพอที่จะจัดกลุ่มในซีรีส์นี้", s.win)
 		return
 	}
 
 	var b strings.Builder
-	b.WriteString("จะสร้างโฟลเดอร์และย้ายไฟล์ดังนี้:\n\n")
+	b.WriteString("จะย้ายไฟล์ดังนี้:\n\n")
 	for _, p := range proposals {
-		fmt.Fprintf(&b, "📁 %s  (%d ไฟล์)\n", p.FolderName, len(p.Episodes))
+		if p.ExistingSeries != nil {
+			fmt.Fprintf(&b, "📁 %s  (%d ไฟล์ 🔀 ย้ายเข้าโฟลเดอร์เดิมที่มีอยู่แล้ว)\n", p.FolderName, len(p.Episodes))
+		} else {
+			fmt.Fprintf(&b, "📁 %s  (%d ไฟล์ 🔀 สร้างโฟลเดอร์ใหม่)\n", p.FolderName, len(p.Episodes))
+		}
 		for _, e := range p.Episodes {
 			fmt.Fprintf(&b, "    - %s\n", e.FileName)
 		}
@@ -190,41 +204,56 @@ func (s *appState) organizeSimilar() {
 	confirmDialog.Show()
 }
 
-// applyGrouping ย้ายไฟล์จริงตาม proposals แต่ละกลุ่ม สร้างโฟลเดอร์ย่อยใต้ series.RootPath
+// applyGrouping ย้ายไฟล์จริงตาม proposals แต่ละกลุ่ม:
+//   - ถ้ามี ExistingSeries (เจอโฟลเดอร์ที่ชื่อคล้ายกันอยู่แล้ว) -> ย้ายเข้าโฟลเดอร์นั้นเลย ไม่สร้างใหม่
+//   - ถ้าไม่มี -> สร้างโฟลเดอร์ย่อยใหม่ใต้ series.RootPath
+//
+// ถ้าปลายทางมีไฟล์ชื่อซ้ำอยู่แล้ว จะเติม " (1)", " (2)" ฯลฯ ต่อท้ายให้อัตโนมัติ (ดู uniqueDestPath)
 // อัปเดต path ของ episode และปรับ Library ให้ตรงกับโครงสร้างไฟล์ใหม่ (สถานะดูแล้วจะติดไปกับไฟล์)
 func (s *appState) applyGrouping(orig *Series, proposals []GroupProposal) error {
 	movedSet := map[*Episode]bool{}
 
 	for _, p := range proposals {
-		folderName := sanitizeFolderName(p.FolderName)
-		newDir := filepath.Join(orig.RootPath, folderName)
-		if err := os.MkdirAll(newDir, 0755); err != nil {
-			return err
-		}
-
 		var target *Series
-		for _, sr := range s.lib.SeriesList {
-			if sr.RootPath == newDir {
-				target = sr
-				break
+		var newDir string
+
+		if p.ExistingSeries != nil {
+			target = p.ExistingSeries
+			newDir = target.RootPath
+		} else {
+			folderName := sanitizeFolderName(p.FolderName)
+			newDir = filepath.Join(orig.RootPath, folderName)
+			if err := os.MkdirAll(newDir, 0755); err != nil {
+				return err
 			}
-		}
-		if target == nil {
-			target = &Series{Name: folderName, RootPath: newDir}
-			s.lib.SeriesList = append(s.lib.SeriesList, target)
+			for _, sr := range s.lib.SeriesList {
+				if sr.RootPath == newDir {
+					target = sr
+					break
+				}
+			}
+			if target == nil {
+				target = &Series{Name: folderName, RootPath: newDir}
+				s.lib.SeriesList = append(s.lib.SeriesList, target)
+			}
 		}
 
 		for _, ep := range p.Episodes {
-			newPath := filepath.Join(newDir, ep.FileName)
-			if ep.FilePath != newPath {
-				if err := os.Rename(ep.FilePath, newPath); err != nil {
+			destPath := uniqueDestPath(newDir, ep.FileName)
+			if ep.FilePath != destPath {
+				if err := os.Rename(ep.FilePath, destPath); err != nil {
 					return fmt.Errorf("ย้ายไฟล์ %s ไม่สำเร็จ: %w", ep.FileName, err)
 				}
-				ep.FilePath = newPath
+				ep.FilePath = destPath
+				ep.FileName = filepath.Base(destPath)
 			}
 			target.Episodes = append(target.Episodes, ep)
 			movedSet[ep] = true
 		}
+
+		sort.Slice(target.Episodes, func(i, j int) bool {
+			return target.Episodes[i].EpisodeNumber < target.Episodes[j].EpisodeNumber
+		})
 	}
 
 	var remaining []*Episode
