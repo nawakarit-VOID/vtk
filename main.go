@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -50,7 +51,10 @@ func main() {
 		state.confirmDeleteSeries()
 	})
 	deleteSeriesBtn.Importance = widget.DangerImportance
-	toolbar := container.NewHBox(scanBtn, organizeBtn, deleteSeriesBtn)
+	playSeriesBtn := widget.NewButtonWithIcon("เล่นซีรีส์นี้", theme.MediaPlayIcon(), func() {
+		state.playSelectedSeries()
+	})
+	toolbar := container.NewHBox(scanBtn, organizeBtn, playSeriesBtn, deleteSeriesBtn)
 
 	state.seriesList = widget.NewList(
 		func() int { return len(state.lib.SeriesList) },
@@ -76,8 +80,9 @@ func main() {
 			check := widget.NewCheck("", nil)
 			label := widget.NewLabel("episode")
 			status := widget.NewLabel("")
+			playBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), nil)
 			delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
-			return container.NewHBox(check, label, status, delBtn)
+			return container.NewHBox(check, label, status, playBtn, delBtn)
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			if state.selectedIdx < 0 {
@@ -90,7 +95,8 @@ func main() {
 			check := row.Objects[0].(*widget.Check)
 			label := row.Objects[1].(*widget.Label)
 			status := row.Objects[2].(*widget.Label)
-			delBtn := row.Objects[3].(*widget.Button)
+			playBtn := row.Objects[3].(*widget.Button)
+			delBtn := row.Objects[4].(*widget.Button)
 
 			label.SetText(fmt.Sprintf("ตอน %d - %s", ep.EpisodeNumber, ep.FileName))
 			check.OnChanged = nil
@@ -100,15 +106,20 @@ func main() {
 				state.seriesList.Refresh()
 				_ = SaveLibrary(state.lib)
 			}
+			playBtn.OnTapped = func() {
+				playFile(state.win, ep.FilePath)
+			}
 			delBtn.OnTapped = func() {
 				state.confirmDeleteEpisode(series, ep)
 			}
 
 			if ep.Exists {
 				status.SetText("")
+				playBtn.Enable()
 			} else {
 				status.Importance = widget.DangerImportance
 				status.SetText("ไฟล์ถูกลบแล้ว")
+				playBtn.Disable()
 			}
 			status.Refresh()
 		},
@@ -432,6 +443,54 @@ func isUnderRoot(path, root string) bool {
 		root += sep
 	}
 	return strings.HasPrefix(path, root)
+}
+
+// knownPlayers คือรายชื่อโปรแกรมเล่นวิดีโอที่รองรับการรับหลายไฟล์เป็น playlist
+// เรียงตามลำดับที่จะลองหา ถ้าเจอตัวไหนในเครื่องก่อนจะใช้ตัวนั้น
+var knownPlayers = []string{"mpv", "vlc", "smplayer", "celluloid", "totem", "xplayer"}
+
+// playFile เปิดไฟล์วิดีโอ 1 ไฟล์ด้วยโปรแกรมเริ่มต้นของระบบ (ผ่าน xdg-open)
+func playFile(win fyne.Window, path string) {
+	cmd := exec.Command("xdg-open", path)
+	if err := cmd.Start(); err != nil {
+		dialog.ShowError(fmt.Errorf("เปิดไฟล์ไม่สำเร็จ: %w", err), win)
+	}
+}
+
+// playSelectedSeries เล่นทุกตอนของซีรีส์ที่เลือกอยู่ต่อกันเป็น playlist เดียว
+// (เฉพาะไฟล์ที่ยังอยู่จริงในดิสก์) โดยลองหาโปรแกรมเล่นวิดีโอที่รองรับ playlist ในเครื่องก่อน
+// ถ้าไม่เจอเลยจะ fallback ไปเปิดตอนแรกด้วยโปรแกรมเริ่มต้นของระบบแทน
+func (s *appState) playSelectedSeries() {
+	if s.selectedIdx < 0 || s.selectedIdx >= len(s.lib.SeriesList) {
+		dialog.ShowInformation("เล่นซีรีส์", "กรุณาเลือกซีรีส์ทางซ้ายก่อน", s.win)
+		return
+	}
+	series := s.lib.SeriesList[s.selectedIdx]
+
+	var paths []string
+	for _, ep := range series.Episodes {
+		if ep.Exists {
+			paths = append(paths, ep.FilePath)
+		}
+	}
+	if len(paths) == 0 {
+		dialog.ShowInformation("เล่นซีรีส์", "ไม่มีไฟล์ที่ยังอยู่จริงในดิสก์ให้เล่น", s.win)
+		return
+	}
+
+	for _, playerName := range knownPlayers {
+		bin, err := exec.LookPath(playerName)
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(bin, paths...)
+		if err := cmd.Start(); err == nil {
+			return
+		}
+	}
+
+	// ไม่เจอโปรแกรมเล่นวิดีโอที่รองรับ playlist ในเครื่องเลย เปิดตอนแรกด้วยโปรแกรมเริ่มต้นของระบบแทน
+	playFile(s.win, paths[0])
 }
 
 // sortSeriesForDisplay จัดลำดับซีรีส์สำหรับแสดงผล: โฟลเดอร์แม่ (IsRoot) มาก่อนเสมอ
