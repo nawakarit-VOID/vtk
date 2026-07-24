@@ -4,6 +4,7 @@
 package main
 
 import (
+	"embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,10 +29,53 @@ type appState struct {
 	rootPath    string
 }
 
+// โหลด icon
+func loadIcon(size int) fyne.Resource {
+	var file string
+
+	switch {
+	case size >= 512:
+		file = "assets/icons/icon-512.png" ///ที่อยู่
+	case size >= 256:
+		file = "assets/icons/icon-256.png"
+	case size >= 128:
+		file = "assets/icons/icon-128.png"
+	default:
+		file = "assets/icons/icon-64.png"
+	}
+
+	data, err := iconFS.ReadFile(file)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "warning: cannot load icon %s: %v\n", file, err)
+		return fyne.NewStaticResource("missing-icon", nil)
+	}
+	if len(data) == 0 {
+		fmt.Fprintf(os.Stderr, "warning: icon %s is empty\n", file)
+		return fyne.NewStaticResource("empty-icon", nil)
+	}
+	return fyne.NewStaticResource(file, data)
+}
+
+//go:embed assets/icons/*
+var iconFS embed.FS
+
+//go:embed assets/font/Itim-Regular.ttf
+var fontItim []byte
+var myFont = fyne.NewStaticResource("Itim-Regular.ttf", fontItim)
+
+// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+// # Main #
+// = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+
 func main() {
-	a := app.New()
+	a := app.NewWithID("com.nawakarit.vtk")
+	a.Settings().SetTheme(&MyTheme{})
+	icon := loadIcon(64)
+	a.SetIcon(icon)
+
 	w := a.NewWindow("Video Tracker")
 	w.Resize(fyne.NewSize(900, 600))
+	w.SetIcon(icon)
 
 	lib, err := LoadLibrary()
 	if err != nil {
