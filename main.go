@@ -59,7 +59,7 @@ func main() {
 	state.seriesList = widget.NewList(
 		func() int { return len(state.lib.SeriesList) },
 		func() fyne.CanvasObject {
-			label := widget.NewLabel("series")
+			label := widget.NewLabel("series\nสถานะ")
 			label.Wrapping = fyne.TextWrapWord
 			return label
 		},
