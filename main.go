@@ -59,7 +59,9 @@ func main() {
 	state.seriesList = widget.NewList(
 		func() int { return len(state.lib.SeriesList) },
 		func() fyne.CanvasObject {
-			return widget.NewLabel("series")
+			label := widget.NewLabel("series")
+			label.Wrapping = fyne.TextWrapWord
+			return label
 		},
 		func(i widget.ListItemID, o fyne.CanvasObject) {
 			s := state.lib.SeriesList[i]
@@ -131,7 +133,7 @@ func main() {
 	}
 
 	split := container.NewHSplit(state.seriesList, state.episodeList)
-	split.Offset = 0.32
+	split.Offset = 0.38
 
 	content := container.NewBorder(toolbar, nil, nil, nil, split)
 	w.SetContent(content)
