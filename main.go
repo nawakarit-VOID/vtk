@@ -144,7 +144,11 @@ func main() {
 			playBtn := row.Objects[3].(*widget.Button)
 			delBtn := row.Objects[4].(*widget.Button)
 
-			label.SetText(fmt.Sprintf("ตอน %d - %s", ep.EpisodeNumber, ep.FileName))
+			resumeNote := ""
+			if ep.ResumeSeconds > 1 {
+				resumeNote = fmt.Sprintf(" (ค้างไว้ที่ %s)", formatDuration(ep.ResumeSeconds))
+			}
+			label.SetText(fmt.Sprintf("ตอน %d - %s%s", ep.EpisodeNumber, ep.FileName, resumeNote))
 			check.OnChanged = nil
 			check.SetChecked(ep.Watched)
 			check.OnChanged = func(v bool) {
@@ -153,7 +157,7 @@ func main() {
 				_ = SaveLibrary(state.lib)
 			}
 			playBtn.OnTapped = func() {
-				playFile(state.win, ep.FilePath)
+				state.playEpisode(ep)
 			}
 			delBtn.OnTapped = func() {
 				state.confirmDeleteEpisode(series, ep)
@@ -213,9 +217,9 @@ func (s *appState) organizeSimilar() {
 	b.WriteString("จะย้ายไฟล์ดังนี้:\n\n")
 	for _, p := range proposals {
 		if p.ExistingSeries != nil {
-			fmt.Fprintf(&b, "📁 %s  (%d ไฟล์ 🔀 ย้ายเข้าโฟลเดอร์เดิมที่มีอยู่แล้ว)\n", p.FolderName, len(p.Episodes))
+			fmt.Fprintf(&b, "📁 %s  (%d ไฟล์ → ย้ายเข้าโฟลเดอร์เดิมที่มีอยู่แล้ว)\n", p.FolderName, len(p.Episodes))
 		} else {
-			fmt.Fprintf(&b, "📁 %s  (%d ไฟล์ 🔀 สร้างโฟลเดอร์ใหม่)\n", p.FolderName, len(p.Episodes))
+			fmt.Fprintf(&b, "📁 %s  (%d ไฟล์ → สร้างโฟลเดอร์ใหม่)\n", p.FolderName, len(p.Episodes))
 		}
 		for _, e := range p.Episodes {
 			fmt.Fprintf(&b, "    - %s\n", e.FileName)
