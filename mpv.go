@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Nawakarit
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License v3.0.
 package main
 
 import (
@@ -105,6 +108,11 @@ func (s *appState) playEpisodeTracked(ep *Episode) {
 			case "end-file":
 				reason = msg.Reason
 			}
+		}
+		// scanner.Scan() คืน false ทั้งตอน socket ปิดปกติ (mpv ออกจากโปรแกรม) และตอนอ่านผิดพลาดจริง ๆ
+		// ทั้งสองกรณีเราจะเดินหน้าไปสรุปผลจาก lastPos/reason ที่เก็บได้อยู่ดี แต่ log error ไว้เผื่อ debug
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "videotracker: mpv IPC read error: %v\n", err)
 		}
 
 		_ = cmd.Wait()
