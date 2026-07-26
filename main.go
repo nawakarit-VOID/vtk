@@ -98,7 +98,10 @@ func main() {
 	playSeriesBtn := widget.NewButtonWithIcon("เล่นซีรีส์นี้", theme.MediaPlayIcon(), func() {
 		state.playSelectedSeries()
 	})
-	toolbar := container.NewHBox(scanBtn, organizeBtn, playSeriesBtn, deleteSeriesBtn)
+	renameSeriesBtn := widget.NewButtonWithIcon("แก้ชื่อ", theme.DocumentCreateIcon(), func() {
+		state.renameSelectedSeries()
+	})
+	toolbar := container.NewHBox(scanBtn, organizeBtn, playSeriesBtn, renameSeriesBtn, deleteSeriesBtn)
 
 	state.seriesList = widget.NewList(
 		func() int { return len(state.lib.SeriesList) },
@@ -581,4 +584,41 @@ func sortSeriesForDisplay(list []*Series) {
 		}
 		return list[i].Name < list[j].Name
 	})
+}
+
+// renameSelectedSeries ให้ผู้ใช้แก้ชื่อที่แสดงผลของซีรีส์ที่เลือกอยู่
+// แก้แค่ Series.Name ในข้อมูลที่แอปเก็บไว้เท่านั้น ไม่แตะชื่อโฟลเดอร์จริงในดิสก์เลย
+func (s *appState) renameSelectedSeries() {
+	if s.selectedIdx < 0 || s.selectedIdx >= len(s.lib.SeriesList) {
+		dialog.ShowInformation("แก้ชื่อซีรีส์", "กรุณาเลือกซีรีส์ทางซ้ายก่อน", s.win)
+		return
+	}
+	series := s.lib.SeriesList[s.selectedIdx]
+
+	entry := widget.NewEntry()
+	entry.SetText(series.Name)
+
+	content := container.NewVBox(
+		widget.NewLabel("ชื่อนี้จะใช้แสดงในแอปเท่านั้น ไม่เปลี่ยนชื่อโฟลเดอร์จริงในดิสก์"),
+		entry,
+	)
+
+	d := dialog.NewCustomConfirm("แก้ชื่อซีรีส์", "บันทึก", "ยกเลิก", content, func(ok bool) {
+		if !ok {
+			return
+		}
+		newName := strings.TrimSpace(entry.Text)
+		if newName == "" {
+			dialog.ShowInformation("แก้ชื่อซีรีส์", "ชื่อห้ามเว้นว่าง", s.win)
+			return
+		}
+		series.Name = newName
+		sortSeriesForDisplay(s.lib.SeriesList)
+		if err := SaveLibrary(s.lib); err != nil {
+			dialog.ShowError(err, s.win)
+		}
+		s.seriesList.Refresh()
+	}, s.win)
+	d.Resize(fyne.NewSize(420, 160))
+	d.Show()
 }
