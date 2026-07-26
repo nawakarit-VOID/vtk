@@ -586,8 +586,9 @@ func sortSeriesForDisplay(list []*Series) {
 	})
 }
 
-// renameSelectedSeries ให้ผู้ใช้แก้ชื่อที่แสดงผลของซีรีส์ที่เลือกอยู่
-// แก้แค่ Series.Name ในข้อมูลที่แอปเก็บไว้เท่านั้น ไม่แตะชื่อโฟลเดอร์จริงในดิสก์เลย
+// renameSelectedSeries ให้ผู้ใช้แก้ชื่อซีรีส์ที่เลือกอยู่:
+//   - โฟลเดอร์ย่อยธรรมดา -> เปลี่ยนชื่อโฟลเดอร์จริงในดิสก์ให้เลย (os.Rename) แล้วอัปเดต path ของทุกตอนในนั้น
+//   - โฟลเดอร์แม่ (IsRoot) -> แก้แค่ชื่อที่แสดงในแอปเท่านั้น ไม่แตะโฟลเดอร์ root จริง (เสี่ยงเกินไป อาจมีไฟล์อื่นปนอยู่)
 func (s *appState) renameSelectedSeries() {
 	if s.selectedIdx < 0 || s.selectedIdx >= len(s.lib.SeriesList) {
 		dialog.ShowInformation("แก้ชื่อซีรีส์", "กรุณาเลือกซีรีส์ทางซ้ายก่อน", s.win)
@@ -598,8 +599,15 @@ func (s *appState) renameSelectedSeries() {
 	entry := widget.NewEntry()
 	entry.SetText(series.Name)
 
+	var noteText string
+	if series.IsRoot {
+		noteText = "นี่คือโฟลเดอร์แม่ จะแก้แค่ชื่อที่แสดงในแอปเท่านั้น ไม่เปลี่ยนชื่อโฟลเดอร์จริงในดิสก์"
+	} else {
+		noteText = "จะเปลี่ยนชื่อโฟลเดอร์จริงในดิสก์ด้วย (ไม่ใช่แค่ชื่อที่แสดงในแอป)"
+	}
+
 	content := container.NewVBox(
-		widget.NewLabel("ชื่อนี้จะใช้แสดงในแอปเท่านั้น ไม่เปลี่ยนชื่อโฟลเดอร์จริงในดิสก์"),
+		widget.NewLabel(noteText),
 		entry,
 	)
 
@@ -612,12 +620,38 @@ func (s *appState) renameSelectedSeries() {
 			dialog.ShowInformation("แก้ชื่อซีรีส์", "ชื่อห้ามเว้นว่าง", s.win)
 			return
 		}
-		series.Name = newName
+
+		if series.IsRoot {
+			series.Name = newName
+		} else {
+			newFolderName := sanitizeFolderName(newName)
+			newDir := filepath.Join(filepath.Dir(series.RootPath), newFolderName)
+			if newDir != series.RootPath {
+				if _, err := os.Stat(newDir); err == nil {
+					dialog.ShowError(fmt.Errorf("มีโฟลเดอร์ชื่อ \"%s\" อยู่แล้ว กรุณาตั้งชื่ออื่น", newFolderName), s.win)
+					return
+				}
+				if err := os.Rename(series.RootPath, newDir); err != nil {
+					dialog.ShowError(fmt.Errorf("เปลี่ยนชื่อโฟลเดอร์ไม่สำเร็จ: %w", err), s.win)
+					return
+				}
+				oldDir := series.RootPath
+				series.RootPath = newDir
+				for _, ep := range series.Episodes {
+					if strings.HasPrefix(ep.FilePath, oldDir) {
+						ep.FilePath = filepath.Join(newDir, ep.FileName)
+					}
+				}
+			}
+			series.Name = newFolderName
+		}
+
 		sortSeriesForDisplay(s.lib.SeriesList)
 		if err := SaveLibrary(s.lib); err != nil {
 			dialog.ShowError(err, s.win)
 		}
 		s.seriesList.Refresh()
+		s.episodeList.Refresh()
 	}, s.win)
 	d.Resize(fyne.NewSize(420, 160))
 	d.Show()
