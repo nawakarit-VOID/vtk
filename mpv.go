@@ -155,3 +155,115 @@ func (s *appState) playEpisode(ep *Episode) {
 	}
 	playFile(s.win, ep.FilePath)
 }
+
+// playSeriesTracked เล่นทุกตอนของซีรีส์เป็น playlist เดียวผ่าน mpv พร้อม track ความคืบหน้าทีละไฟล์
+// เหมือน playEpisodeTracked แต่ทำกับทุกไฟล์ในเพลย์ลิสต์ต่อกัน โดย observe "playlist-pos" คู่กับ
+// "time-pos" ไว้ด้วย เพื่อรู้ว่าตอนที่ event "end-file" มาถึงนั้น เป็นการจบของตอนไหนในลิสต์
+//
+// ข้อควรรู้: อาศัยสมมติฐานว่า mpv ส่ง event "end-file" ก่อนที่ "playlist-pos" จะขยับไปตอนถัดไป
+// (ซึ่งเป็นลำดับปกติของ mpv) ถ้า mpv บางเวอร์ชันส่งไม่ตรงลำดับนี้ อาจมีโอกาสจับผิดตอนได้
+func (s *appState) playSeriesTracked(series *Series) {
+	var eps []*Episode
+	var paths []string
+	for _, ep := range series.Episodes {
+		if ep.Exists {
+			eps = append(eps, ep)
+			paths = append(paths, ep.FilePath)
+		}
+	}
+	if len(paths) == 0 {
+		dialog.ShowInformation("เล่นซีรีส์", "ไม่มีไฟล์ที่ยังอยู่จริงในดิสก์ให้เล่น", s.win)
+		return
+	}
+
+	sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("videotracker-mpv-series-%d.sock", time.Now().UnixNano()))
+
+	args := []string{"--input-ipc-server=" + sockPath, "--force-window=yes"}
+	if eps[0].ResumeSeconds > 1 {
+		args = append(args, fmt.Sprintf("--start=%.0f", eps[0].ResumeSeconds))
+	}
+	args = append(args, paths...)
+
+	cmd := exec.Command("mpv", args...)
+	if err := cmd.Start(); err != nil {
+		dialog.ShowError(fmt.Errorf("เปิด mpv ไม่สำเร็จ: %w", err), s.win)
+		return
+	}
+
+	go func() {
+		defer os.Remove(sockPath)
+
+		conn := dialMPVSocket(sockPath)
+		if conn == nil {
+			_ = cmd.Wait()
+			return
+		}
+		defer conn.Close()
+
+		observePos, err := json.Marshal(map[string]interface{}{
+			"command": []interface{}{"observe_property", 1, "time-pos"},
+		})
+		if err == nil {
+			_, _ = conn.Write(append(observePos, '\n'))
+		}
+		observePlaylistPos, err := json.Marshal(map[string]interface{}{
+			"command": []interface{}{"observe_property", 2, "playlist-pos"},
+		})
+		if err == nil {
+			_, _ = conn.Write(append(observePlaylistPos, '\n'))
+		}
+
+		currentIdx := 0
+		var lastPos float64
+
+		// finalizeEpisode บันทึกผลของตอนที่เพิ่งเล่นจบ (idx) เหมือน logic ของ playEpisodeTracked
+		finalizeEpisode := func(idx int, reason string, pos float64) {
+			if idx < 0 || idx >= len(eps) {
+				return
+			}
+			ep := eps[idx]
+			if reason == "eof" {
+				ep.Watched = true
+				ep.ResumeSeconds = 0
+			} else if pos > resumeThresholdSeconds {
+				ep.ResumeSeconds = pos
+			} else {
+				ep.ResumeSeconds = 0
+			}
+			if err := SaveLibrary(s.lib); err != nil {
+				dialog.ShowError(err, s.win)
+			}
+			s.seriesList.Refresh()
+			s.episodeList.Refresh()
+		}
+
+		scanner := bufio.NewScanner(conn)
+		for scanner.Scan() {
+			var msg mpvIPCMessage
+			if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
+				continue
+			}
+			switch msg.Event {
+			case "property-change":
+				switch msg.Name {
+				case "time-pos":
+					if f, ok := msg.Data.(float64); ok {
+						lastPos = f
+					}
+				case "playlist-pos":
+					if f, ok := msg.Data.(float64); ok {
+						currentIdx = int(f)
+					}
+				}
+			case "end-file":
+				finalizeEpisode(currentIdx, msg.Reason, lastPos)
+				lastPos = 0
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "videotracker: mpv IPC read error: %v\n", err)
+		}
+
+		_ = cmd.Wait()
+	}()
+}

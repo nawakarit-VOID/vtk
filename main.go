@@ -549,6 +549,11 @@ func (s *appState) playSelectedSeries() {
 	}
 	series := s.lib.SeriesList[s.selectedIdx]
 
+	if mpvAvailable() {
+		s.playSeriesTracked(series)
+		return
+	}
+
 	var paths []string
 	for _, ep := range series.Episodes {
 		if ep.Exists {
