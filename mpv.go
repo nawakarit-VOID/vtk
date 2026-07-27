@@ -156,7 +156,10 @@ func (s *appState) playEpisode(ep *Episode) {
 	playFile(s.win, ep.FilePath)
 }
 
-// playSeriesTracked เล่นทุกตอนของซีรีส์เป็น playlist เดียวผ่าน mpv พร้อม track ความคืบหน้าทีละไฟล์
+// playSeriesTracked เล่นทุกตอนที่ยังไม่ได้ดูของซีรีส์เป็น playlist เดียวผ่าน mpv พร้อม track ความคืบหน้าทีละไฟล์
+// (ข้ามตอนที่ติ๊กว่าดูแล้วไปเลย ไม่เอามาเล่นซ้ำ) และถ้ามีตอนไหนเล่นค้างไว้อยู่ จะเริ่มเล่นจากตอนนั้นทันที
+// ไม่เริ่มจากตอนแรกสุดของลิสต์เสมอไป
+//
 // เหมือน playEpisodeTracked แต่ทำกับทุกไฟล์ในเพลย์ลิสต์ต่อกัน โดย observe "playlist-pos" คู่กับ
 // "time-pos" ไว้ด้วย เพื่อรู้ว่าตอนที่ event "end-file" มาถึงนั้น เป็นการจบของตอนไหนในลิสต์
 //
@@ -166,21 +169,33 @@ func (s *appState) playSeriesTracked(series *Series) {
 	var eps []*Episode
 	var paths []string
 	for _, ep := range series.Episodes {
-		if ep.Exists {
+		if ep.Exists && !ep.Watched {
 			eps = append(eps, ep)
 			paths = append(paths, ep.FilePath)
 		}
 	}
 	if len(paths) == 0 {
-		dialog.ShowInformation("เล่นซีรีส์", "ไม่มีไฟล์ที่ยังอยู่จริงในดิสก์ให้เล่น", s.win)
+		dialog.ShowInformation("เล่นซีรีส์", "ไม่มีตอนที่ยังไม่ได้ดูให้เล่นแล้ว", s.win)
 		return
+	}
+
+	// หาตอนแรกที่มีจุดค้างไว้ (ถ้ามี) เพื่อเริ่มเล่นจากตรงนั้นแทนที่จะเริ่มจากตอนแรกสุดของลิสต์เสมอ
+	startIdx := 0
+	for i, ep := range eps {
+		if ep.ResumeSeconds > 1 {
+			startIdx = i
+			break
+		}
 	}
 
 	sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("videotracker-mpv-series-%d.sock", time.Now().UnixNano()))
 
 	args := []string{"--input-ipc-server=" + sockPath, "--force-window=yes"}
-	if eps[0].ResumeSeconds > 1 {
-		args = append(args, fmt.Sprintf("--start=%.0f", eps[0].ResumeSeconds))
+	if startIdx > 0 {
+		args = append(args, fmt.Sprintf("--playlist-start=%d", startIdx))
+	}
+	if eps[startIdx].ResumeSeconds > 1 {
+		args = append(args, fmt.Sprintf("--start=%.0f", eps[startIdx].ResumeSeconds))
 	}
 	args = append(args, paths...)
 
@@ -213,7 +228,7 @@ func (s *appState) playSeriesTracked(series *Series) {
 			_, _ = conn.Write(append(observePlaylistPos, '\n'))
 		}
 
-		currentIdx := 0
+		currentIdx := startIdx // เริ่มต้นตรงกับตำแหน่งจริงที่สั่งให้ mpv เล่น ไม่ใช่ 0 เสมอไป
 		var lastPos float64
 
 		// finalizeEpisode บันทึกผลของตอนที่เพิ่งเล่นจบ (idx) เหมือน logic ของ playEpisodeTracked
