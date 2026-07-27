@@ -151,7 +151,7 @@ func main() {
 			if ep.ResumeSeconds > 1 {
 				resumeNote = fmt.Sprintf(" (ค้างไว้ที่ %s)", formatDuration(ep.ResumeSeconds))
 			}
-			label.SetText(fmt.Sprintf("ตอน %d - %s%s", ep.EpisodeNumber, ep.FileName, resumeNote))
+			label.SetText(fmt.Sprintf("%s%s", ep.FileName, resumeNote))
 			check.OnChanged = nil
 			check.SetChecked(ep.Watched)
 			check.OnChanged = func(v bool) {
@@ -305,7 +305,7 @@ func (s *appState) applyGrouping(orig *Series, proposals []GroupProposal) error 
 		}
 
 		sort.Slice(target.Episodes, func(i, j int) bool {
-			return target.Episodes[i].EpisodeNumber < target.Episodes[j].EpisodeNumber
+			return target.Episodes[i].FileName < target.Episodes[j].FileName
 		})
 	}
 
