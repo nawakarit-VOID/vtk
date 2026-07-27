@@ -156,12 +156,14 @@ func (s *appState) playEpisode(ep *Episode) {
 	playFile(s.win, ep.FilePath)
 }
 
-// playSeriesTracked เล่นทุกตอนที่ยังไม่ได้ดูของซีรีส์เป็น playlist เดียวผ่าน mpv พร้อม track ความคืบหน้าทีละไฟล์
-// (ข้ามตอนที่ติ๊กว่าดูแล้วไปเลย ไม่เอามาเล่นซ้ำ) และถ้ามีตอนไหนเล่นค้างไว้อยู่ จะเริ่มเล่นจากตอนนั้นทันที
-// ไม่เริ่มจากตอนแรกสุดของลิสต์เสมอไป
+// playSeriesTracked เล่นทุกตอนที่ยังไม่ได้ดูของซีรีส์เป็น playlist เดียวผ่าน mpv เรียงตามลำดับปกติ
+// (ข้ามเฉพาะตอนที่ติ๊กว่าดูแล้วไปเลย ไม่เอามาเล่นซ้ำ) พร้อม track ความคืบหน้าทีละไฟล์
+// ถ้าไฟล์ไหนในลิสต์มีจุดค้างไว้อยู่ (ไม่ว่าจะอยู่ตำแหน่งไหน) พอ mpv เล่นมาถึงไฟล์นั้นจริง ๆ
+// จะสั่ง seek ผ่าน IPC ไปตรงจุดค้างให้ทันที (ไม่ใช้ --playlist-start ข้ามไฟล์ก่อนหน้าไปเลย
+// เพราะจะทำให้ตอนที่ยังไม่ได้ดูก่อนหน้าตอนที่ค้างไว้ถูกข้ามไปด้วยโดยไม่ตั้งใจ)
 //
-// เหมือน playEpisodeTracked แต่ทำกับทุกไฟล์ในเพลย์ลิสต์ต่อกัน โดย observe "playlist-pos" คู่กับ
-// "time-pos" ไว้ด้วย เพื่อรู้ว่าตอนที่ event "end-file" มาถึงนั้น เป็นการจบของตอนไหนในลิสต์
+// observe "playlist-pos" คู่กับ "time-pos" ไว้ เพื่อรู้ว่า event "end-file" ที่มาถึงนั้น
+// เป็นการจบของตอนไหนในลิสต์ และรู้ว่า mpv ขยับไปเล่นไฟล์ไหนแล้วเพื่อสั่ง seek ให้ถูกไฟล์
 //
 // ข้อควรรู้: อาศัยสมมติฐานว่า mpv ส่ง event "end-file" ก่อนที่ "playlist-pos" จะขยับไปตอนถัดไป
 // (ซึ่งเป็นลำดับปกติของ mpv) ถ้า mpv บางเวอร์ชันส่งไม่ตรงลำดับนี้ อาจมีโอกาสจับผิดตอนได้
@@ -179,24 +181,11 @@ func (s *appState) playSeriesTracked(series *Series) {
 		return
 	}
 
-	// หาตอนแรกที่มีจุดค้างไว้ (ถ้ามี) เพื่อเริ่มเล่นจากตรงนั้นแทนที่จะเริ่มจากตอนแรกสุดของลิสต์เสมอ
-	startIdx := 0
-	for i, ep := range eps {
-		if ep.ResumeSeconds > 1 {
-			startIdx = i
-			break
-		}
-	}
-
 	sockPath := filepath.Join(os.TempDir(), fmt.Sprintf("videotracker-mpv-series-%d.sock", time.Now().UnixNano()))
 
+	// เล่นเรียงตามลำดับปกติเสมอ ไม่ข้ามไฟล์ไหนไปก่อน (ไม่ใช้ --playlist-start/--start)
+	// ถ้าไฟล์ไหนมีจุดค้าง จะสั่ง seek ผ่าน IPC ตอนที่ mpv เล่นมาถึงไฟล์นั้นจริง ๆ แทน (ดูด้านล่าง)
 	args := []string{"--input-ipc-server=" + sockPath, "--force-window=yes"}
-	if startIdx > 0 {
-		args = append(args, fmt.Sprintf("--playlist-start=%d", startIdx))
-	}
-	if eps[startIdx].ResumeSeconds > 1 {
-		args = append(args, fmt.Sprintf("--start=%.0f", eps[startIdx].ResumeSeconds))
-	}
 	args = append(args, paths...)
 
 	cmd := exec.Command("mpv", args...)
@@ -228,8 +217,9 @@ func (s *appState) playSeriesTracked(series *Series) {
 			_, _ = conn.Write(append(observePlaylistPos, '\n'))
 		}
 
-		currentIdx := startIdx // เริ่มต้นตรงกับตำแหน่งจริงที่สั่งให้ mpv เล่น ไม่ใช่ 0 เสมอไป
+		currentIdx := 0
 		var lastPos float64
+		seekedFor := -1 // index ที่สั่ง seek ไปแล้ว กันสั่งซ้ำ
 
 		// finalizeEpisode บันทึกผลของตอนที่เพิ่งเล่นจบ (idx) เหมือน logic ของ playEpisodeTracked
 		finalizeEpisode := func(idx int, reason string, pos float64) {
@@ -252,6 +242,26 @@ func (s *appState) playSeriesTracked(series *Series) {
 			s.episodeList.Refresh()
 		}
 
+		// seekToResumeIfNeeded สั่ง mpv seek ไปจุดค้างของไฟล์ที่ idx (ถ้ามี และยังไม่เคยสั่งสำหรับ idx นี้)
+		seekToResumeIfNeeded := func(conn net.Conn, idx int) {
+			if idx < 0 || idx >= len(eps) || idx == seekedFor {
+				return
+			}
+			seekedFor = idx
+			if eps[idx].ResumeSeconds <= 1 {
+				return
+			}
+			seekCmd, err := json.Marshal(map[string]interface{}{
+				"command": []interface{}{"seek", eps[idx].ResumeSeconds, "absolute"},
+			})
+			if err == nil {
+				_, _ = conn.Write(append(seekCmd, '\n'))
+			}
+		}
+
+		// เผื่อไฟล์แรกสุด (index 0) มีจุดค้างด้วย เช็คทันทีตั้งแต่เริ่ม ไม่ต้องรอ event playlist-pos
+		seekToResumeIfNeeded(conn, currentIdx)
+
 		scanner := bufio.NewScanner(conn)
 		for scanner.Scan() {
 			var msg mpvIPCMessage
@@ -268,6 +278,7 @@ func (s *appState) playSeriesTracked(series *Series) {
 				case "playlist-pos":
 					if f, ok := msg.Data.(float64); ok {
 						currentIdx = int(f)
+						seekToResumeIfNeeded(conn, currentIdx)
 					}
 				}
 			case "end-file":
