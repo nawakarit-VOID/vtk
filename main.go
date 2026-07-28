@@ -23,6 +23,8 @@ import (
 type appState struct {
 	lib         *Library
 	win         fyne.Window
+	seriesBox   *fyne.Container // VBox ของแถวซีรีส์ (แทน widget.List เดิม เพื่อให้แต่ละแถวสูงตามเนื้อหาได้)
+	seriesRows  []*seriesRow
 	seriesList  *widget.List
 	episodeList *widget.List
 	selectedIdx int
@@ -103,20 +105,8 @@ func main() {
 	})
 	toolbar := container.NewHBox(scanBtn, organizeBtn, playSeriesBtn, renameSeriesBtn, deleteSeriesBtn)
 
-	state.seriesList = widget.NewList(
-		func() int { return len(state.lib.SeriesList) },
-		func() fyne.CanvasObject {
-			label := widget.NewLabel("series\nสถานะ")
-			label.Wrapping = fyne.TextWrapWord
-			return label
-		},
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-			s := state.lib.SeriesList[i]
-			label := o.(*widget.Label)
-			label.SetText(fmt.Sprintf("%s\nดูล่าสุด: ตอน %d  (ดูแล้ว %d/%d ตอน)",
-				s.Name, s.LastWatchedEpisode(), s.WatchedCount(), s.TotalCount()))
-		},
-	)
+	state.seriesBox = container.NewVBox()
+	state.refreshSeriesRows()
 
 	state.episodeList = widget.NewList(
 		func() int {
@@ -156,7 +146,7 @@ func main() {
 			check.SetChecked(ep.Watched)
 			check.OnChanged = func(v bool) {
 				ep.Watched = v
-				state.seriesList.Refresh()
+				state.refreshSeriesRows()
 				_ = SaveLibrary(state.lib)
 			}
 			playBtn.OnTapped = func() {
@@ -178,12 +168,9 @@ func main() {
 		},
 	)
 
-	state.seriesList.OnSelected = func(id widget.ListItemID) {
-		state.selectedIdx = id
-		state.episodeList.Refresh()
-	}
+	seriesScroll := container.NewVScroll(state.seriesBox)
 
-	split := container.NewHSplit(state.seriesList, state.episodeList)
+	split := container.NewHSplit(seriesScroll, state.episodeList)
 	split.Offset = 0.38
 
 	content := container.NewBorder(toolbar, nil, nil, nil, split)
@@ -247,8 +234,7 @@ func (s *appState) organizeSimilar() {
 			}
 			sortSeriesForDisplay(s.lib.SeriesList)
 			s.selectedIdx = -1 // โครงสร้างซีรีส์เปลี่ยนไปแล้ว (แยก/ย้ายไฟล์) ตำแหน่งเดิมใช้ไม่ได้อีกต่อไป
-			s.seriesList.UnselectAll()
-			s.seriesList.Refresh()
+			s.refreshSeriesRows()
 			s.episodeList.Refresh()
 		},
 		s.win,
@@ -350,11 +336,10 @@ func (s *appState) chooseAndScan() {
 		MergeScan(s.lib, scanned, path)
 		sortSeriesForDisplay(s.lib.SeriesList)
 		s.selectedIdx = -1 // ลำดับซีรีส์เปลี่ยนไปแล้ว ตำแหน่งที่เคยเลือกไว้ไม่ตรงของเดิมอีกต่อไป
-		s.seriesList.UnselectAll()
 		if err := SaveLibrary(s.lib); err != nil {
 			dialog.ShowError(err, s.win)
 		}
-		s.seriesList.Refresh()
+		s.refreshSeriesRows()
 		s.episodeList.Refresh()
 	}, s.win)
 }
@@ -432,14 +417,13 @@ func (s *appState) removeEpisodeFromLibrary(series *Series, ep *Episode) {
 		}
 		s.lib.SeriesList = newList
 		s.selectedIdx = -1
-		s.seriesList.UnselectAll()
 	}
 
 	if err := SaveLibrary(s.lib); err != nil {
 		dialog.ShowError(err, s.win)
 	}
 	sortSeriesForDisplay(s.lib.SeriesList)
-	s.seriesList.Refresh()
+	s.refreshSeriesRows()
 	s.episodeList.Refresh()
 }
 
@@ -509,12 +493,11 @@ func (s *appState) removeSeriesFromLibrary(series *Series) {
 	}
 	s.lib.SeriesList = newList
 	s.selectedIdx = -1
-	s.seriesList.UnselectAll()
 
 	if err := SaveLibrary(s.lib); err != nil {
 		dialog.ShowError(err, s.win)
 	}
-	s.seriesList.Refresh()
+	s.refreshSeriesRows()
 	s.episodeList.Refresh()
 }
 
@@ -578,6 +561,38 @@ func (s *appState) playSelectedSeries() {
 
 	// ไม่เจอโปรแกรมเล่นวิดีโอที่รองรับ playlist ในเครื่องเลย เปิดตอนแรกด้วยโปรแกรมเริ่มต้นของระบบแทน
 	playFile(s.win, paths[0])
+}
+
+// refreshSeriesRows สร้างแถวซีรีส์ใหม่ทั้งหมดใน seriesBox ให้ตรงกับ lib.SeriesList ปัจจุบัน
+// เรียกทุกครั้งที่ลิสต์ซีรีส์เปลี่ยน (สแกน, ลบ, จัดกลุ่ม, แก้ชื่อ ฯลฯ) แทนที่ widget.List.Refresh() เดิม
+// แต่ละแถวจองความสูงตามเนื้อหาจริงของตัวเอง (ชื่อยาวแค่ไหนก็ไม่ล้น เพราะไม่ใช่ list แบบ virtualized)
+func (s *appState) refreshSeriesRows() {
+	s.seriesBox.Objects = nil
+	s.seriesRows = nil
+
+	for i, series := range s.lib.SeriesList {
+		idx := i // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+		text := fmt.Sprintf("%s\nดูล่าสุด: ตอน %d  (ดูแล้ว %d/%d ตอน)",
+			series.Name, series.LastWatchedEpisode(), series.WatchedCount(), series.TotalCount())
+
+		row := newSeriesRow(text, func() {
+			s.selectedIdx = idx
+			s.updateSeriesSelectionHighlight()
+			s.episodeList.Refresh()
+		})
+		row.SetSelected(idx == s.selectedIdx)
+		s.seriesRows = append(s.seriesRows, row)
+		s.seriesBox.Add(row)
+	}
+
+	s.seriesBox.Refresh()
+}
+
+// updateSeriesSelectionHighlight ปรับให้เห็นว่าแถวไหนถูกเลือกอยู่ โดยไม่ต้องสร้างแถวใหม่ทั้งหมด
+func (s *appState) updateSeriesSelectionHighlight() {
+	for i, row := range s.seriesRows {
+		row.SetSelected(i == s.selectedIdx)
+	}
 }
 
 // sortSeriesForDisplay จัดลำดับซีรีส์สำหรับแสดงผล: โฟลเดอร์แม่ (IsRoot) มาก่อนเสมอ
@@ -655,7 +670,7 @@ func (s *appState) renameSelectedSeries() {
 		if err := SaveLibrary(s.lib); err != nil {
 			dialog.ShowError(err, s.win)
 		}
-		s.seriesList.Refresh()
+		s.refreshSeriesRows()
 		s.episodeList.Refresh()
 	}, s.win)
 	d.Resize(fyne.NewSize(420, 160))
