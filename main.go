@@ -605,6 +605,10 @@ func (s *appState) refreshSeriesRows() {
 		row.SetSelected(idx == s.selectedIdx)
 		s.seriesRows = append(s.seriesRows, row)
 		s.seriesBox.Add(row)
+
+		if i < len(s.lib.SeriesList)-1 {
+			s.seriesBox.Add(widget.NewSeparator())
+		}
 	}
 
 	s.seriesBox.Refresh()
