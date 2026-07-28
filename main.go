@@ -344,6 +344,28 @@ func (s *appState) chooseAndScan() {
 	}, s.win)
 }
 
+// moveToTrash ย้ายไฟล์หรือโฟลเดอร์ไปถังขยะของระบบ (ตาม freedesktop.org trash spec) แทนการลบถาวร
+// ลองหาเครื่องมือที่มีอยู่ในเครื่องตามลำดับ: gio (GNOME/Cinnamon) -> trash-put (trash-cli) -> kioclient5 (KDE)
+// ใช้ได้ทั้งไฟล์เดี่ยวและทั้งโฟลเดอร์ (เครื่องมือพวกนี้ย้ายทั้งโฟลเดอร์ให้อัตโนมัติ)
+func moveToTrash(path string) error {
+	candidates := [][]string{
+		{"gio", "trash", path},
+		{"trash-put", path},
+		{"kioclient5", "move", path, "trash:/"},
+	}
+	for _, c := range candidates {
+		bin, err := exec.LookPath(c[0])
+		if err != nil {
+			continue
+		}
+		cmd := exec.Command(bin, c[1:]...)
+		if err := cmd.Run(); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("ไม่พบเครื่องมือย้ายไฟล์ไปถังขยะในเครื่อง ลองติดตั้งด้วยคำสั่ง: sudo apt install trash-cli")
+}
+
 // showDeleteChoiceDialog แสดง dialog ที่มี 2 ปุ่มให้เลือก: "ลบไฟล์จริง" กับ "ลบแค่ลิสต์"
 // พร้อมปุ่มยกเลิก ใช้ร่วมกันทั้งกรณีลบไฟล์เดี่ยวและลบทั้งซีรีส์/โฟลเดอร์แม่
 func showDeleteChoiceDialog(win fyne.Window, title, message string, onDeleteReal func(), onListOnly func()) {
@@ -352,7 +374,7 @@ func showDeleteChoiceDialog(win fyne.Window, title, message string, onDeleteReal
 	msgLabel := widget.NewLabel(message)
 	msgLabel.Wrapping = fyne.TextWrapWord
 
-	realBtn := widget.NewButtonWithIcon("ลบไฟล์จริง", theme.DeleteIcon(), func() {
+	realBtn := widget.NewButtonWithIcon("ย้ายไปถังขยะ", theme.DeleteIcon(), func() {
 		d.Hide()
 		onDeleteReal()
 	})
@@ -377,15 +399,15 @@ func showDeleteChoiceDialog(win fyne.Window, title, message string, onDeleteReal
 // confirmDeleteEpisode ถามว่าจะลบไฟล์วิดีโอ 1 ไฟล์แบบไหน: ลบจริงในดิสก์ หรือเอาออกจากลิสต์อย่างเดียว
 func (s *appState) confirmDeleteEpisode(series *Series, ep *Episode) {
 	msg := fmt.Sprintf(
-		"\"%s\"\n\n• ลบไฟล์จริง = ลบไฟล์นี้ออกจากดิสก์จริง ย้อนกลับไม่ได้\n"+
+		"\"%s\"\n\n• ย้ายไปถังขยะ = ย้ายไฟล์นี้ไปถังขยะของระบบ (กู้คืนได้ภายหลังถ้าจำเป็น)\n"+
 			"• ลบแค่ลิสต์ = เอาออกจากรายการติดตาม ไฟล์บนดิสก์ยังอยู่เหมือนเดิม",
 		ep.FileName,
 	)
 	showDeleteChoiceDialog(s.win, "ลบตอนนี้", msg,
 		func() {
 			if ep.Exists {
-				if err := os.Remove(ep.FilePath); err != nil && !os.IsNotExist(err) {
-					dialog.ShowError(fmt.Errorf("ลบไฟล์ %s ไม่สำเร็จ: %w", ep.FileName, err), s.win)
+				if err := moveToTrash(ep.FilePath); err != nil {
+					dialog.ShowError(err, s.win)
 					return
 				}
 			}
@@ -438,12 +460,12 @@ func (s *appState) confirmDeleteSeries() {
 
 	var realDesc string
 	if series.IsRoot {
-		realDesc = fmt.Sprintf("ลบไฟล์วิดีโอทั้งหมด %d ไฟล์ในนี้ออกจากดิสก์จริง (ไฟล์อื่นที่ไม่ใช่วิดีโอในโฟลเดอร์เดียวกันจะไม่ถูกแตะ)", series.TotalCount())
+		realDesc = fmt.Sprintf("ย้ายไฟล์วิดีโอทั้งหมด %d ไฟล์ในนี้ไปถังขยะ (ไฟล์อื่นที่ไม่ใช่วิดีโอในโฟลเดอร์เดียวกันจะไม่ถูกแตะ)", series.TotalCount())
 	} else {
-		realDesc = fmt.Sprintf("ลบทั้งโฟลเดอร์ \"%s\" ออกจากดิสก์จริง (รวมไฟล์ทั้งหมด %d ไฟล์ข้างใน)", series.Name, series.TotalCount())
+		realDesc = fmt.Sprintf("ย้ายทั้งโฟลเดอร์ \"%s\" ไปถังขยะ (รวมไฟล์ทั้งหมด %d ไฟล์ข้างใน)", series.Name, series.TotalCount())
 	}
 	msg := fmt.Sprintf(
-		"\"%s\"\n\n• ลบไฟล์จริง = %s ย้อนกลับไม่ได้\n"+
+		"\"%s\"\n\n• ย้ายไปถังขยะ = %s (กู้คืนได้ภายหลังถ้าจำเป็น)\n"+
 			"• ลบแค่ลิสต์ = เอาออกจากรายการติดตาม ไฟล์/โฟลเดอร์บนดิสก์ยังอยู่เหมือนเดิม",
 		series.Name, realDesc,
 	)
@@ -458,14 +480,14 @@ func (s *appState) confirmDeleteSeries() {
 					if !ep.Exists {
 						continue
 					}
-					if err := os.Remove(ep.FilePath); err != nil && !os.IsNotExist(err) {
-						dialog.ShowError(fmt.Errorf("ลบไฟล์ %s ไม่สำเร็จ: %w", ep.FileName, err), s.win)
+					if err := moveToTrash(ep.FilePath); err != nil {
+						dialog.ShowError(err, s.win)
 						return
 					}
 				}
 			} else {
-				if err := os.RemoveAll(series.RootPath); err != nil {
-					dialog.ShowError(fmt.Errorf("ลบโฟลเดอร์ %s ไม่สำเร็จ: %w", series.RootPath, err), s.win)
+				if err := moveToTrash(series.RootPath); err != nil {
+					dialog.ShowError(err, s.win)
 					return
 				}
 			}
