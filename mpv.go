@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/dialog"
 )
 
@@ -126,11 +127,14 @@ func (s *appState) playEpisodeTracked(ep *Episode) {
 			ep.ResumeSeconds = 0
 		}
 
-		if err := SaveLibrary(s.lib); err != nil {
-			dialog.ShowError(err, s.win)
-		}
-		s.seriesList.Refresh()
-		s.episodeList.Refresh()
+		saveErr := SaveLibrary(s.lib)
+		fyne.Do(func() {
+			if saveErr != nil {
+				dialog.ShowError(saveErr, s.win)
+			}
+			s.refreshSeriesRows()
+			s.episodeList.Refresh()
+		})
 	}()
 }
 
@@ -235,11 +239,14 @@ func (s *appState) playSeriesTracked(series *Series) {
 			} else {
 				ep.ResumeSeconds = 0
 			}
-			if err := SaveLibrary(s.lib); err != nil {
-				dialog.ShowError(err, s.win)
-			}
-			s.seriesList.Refresh()
-			s.episodeList.Refresh()
+			saveErr := SaveLibrary(s.lib)
+			fyne.Do(func() {
+				if saveErr != nil {
+					dialog.ShowError(saveErr, s.win)
+				}
+				s.refreshSeriesRows()
+				s.episodeList.Refresh()
+			})
 		}
 
 		// seekToResumeIfNeeded สั่ง mpv seek ไปจุดค้างของไฟล์ที่ idx (ถ้ามี และยังไม่เคยสั่งสำหรับ idx นี้)
