@@ -291,7 +291,7 @@ func (s *appState) applyGrouping(orig *Series, proposals []GroupProposal) error 
 		}
 
 		sort.Slice(target.Episodes, func(i, j int) bool {
-			return target.Episodes[i].FileName < target.Episodes[j].FileName
+			return naturalLess(target.Episodes[i].FileName, target.Episodes[j].FileName)
 		})
 	}
 

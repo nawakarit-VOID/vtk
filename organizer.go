@@ -300,7 +300,7 @@ func BuildProposals(episodes []*Episode, siblings []*Series) []GroupProposal {
 			continue // กลุ่มเดี่ยว ไม่มีโฟลเดอร์เดิมให้ย้ายเข้า ไม่มีประโยชน์ที่จะย้าย
 		}
 
-		sort.Slice(c.eps, func(i, j int) bool { return c.eps[i].FileName < c.eps[j].FileName })
+		sort.Slice(c.eps, func(i, j int) bool { return naturalLess(c.eps[i].FileName, c.eps[j].FileName) })
 
 		folderName := mostCommonDisplayName(c.eps)
 		if matched != nil {

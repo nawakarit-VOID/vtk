@@ -85,7 +85,7 @@ func ScanFolder(rootPath string) ([]*Series, error) {
 
 	// โฟลเดอร์แม่ (ไฟล์หลวม ๆ ตรง root) มาก่อนเสมอ ถ้ามี
 	if len(rootFiles) > 0 {
-		sort.Slice(rootFiles, func(i, j int) bool { return rootFiles[i].FileName < rootFiles[j].FileName })
+		sort.Slice(rootFiles, func(i, j int) bool { return naturalLess(rootFiles[i].FileName, rootFiles[j].FileName) })
 		seriesList = append(seriesList, &Series{
 			Name:     filepath.Base(rootPath),
 			RootPath: rootPath,
@@ -118,7 +118,7 @@ func scanSeriesFolder(name, path string) (*Series, error) {
 			})
 		}
 	}
-	sort.Slice(s.Episodes, func(i, j int) bool { return s.Episodes[i].FileName < s.Episodes[j].FileName })
+	sort.Slice(s.Episodes, func(i, j int) bool { return naturalLess(s.Episodes[i].FileName, s.Episodes[j].FileName) })
 	return s, nil
 }
 
@@ -172,7 +172,7 @@ func MergeScan(lib *Library, scanned []*Series, rootPath string) {
 		}
 
 		sort.Slice(existing.Episodes, func(i, j int) bool {
-			return existing.Episodes[i].FileName < existing.Episodes[j].FileName
+			return naturalLess(existing.Episodes[i].FileName, existing.Episodes[j].FileName)
 		})
 	}
 
