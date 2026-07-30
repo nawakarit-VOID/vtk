@@ -25,8 +25,7 @@ type appState struct {
 	win         fyne.Window
 	seriesBox   *fyne.Container // VBox ของแถวซีรีส์ (แทน widget.List เดิม เพื่อให้แต่ละแถวสูงตามเนื้อหาได้)
 	seriesRows  []*seriesRow
-	seriesList  *widget.List
-	episodeList *widget.List
+	episodeBox  *fyne.Container // VBox ของแถวตอน (แทน widget.List เดิม เพื่อให้เลื่อนแนวนอนได้ตอนชื่อไฟล์ยาว)
 	selectedIdx int
 	rootPath    string
 }
@@ -108,69 +107,14 @@ func main() {
 	state.seriesBox = container.NewVBox()
 	state.refreshSeriesRows()
 
-	state.episodeList = widget.NewList(
-		func() int {
-			if state.selectedIdx < 0 || state.selectedIdx >= len(state.lib.SeriesList) {
-				return 0
-			}
-			return len(state.lib.SeriesList[state.selectedIdx].Episodes)
-		},
-		func() fyne.CanvasObject {
-			check := widget.NewCheck("", nil)
-			label := widget.NewLabel("episode")
-			status := widget.NewLabel("")
-			playBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), nil)
-			delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
-			return container.NewHBox(check, label, status, playBtn, delBtn)
-		},
-		func(i widget.ListItemID, o fyne.CanvasObject) {
-			if state.selectedIdx < 0 {
-				return
-			}
-			series := state.lib.SeriesList[state.selectedIdx]
-			ep := series.Episodes[i]
-
-			row := o.(*fyne.Container)
-			check := row.Objects[0].(*widget.Check)
-			label := row.Objects[1].(*widget.Label)
-			status := row.Objects[2].(*widget.Label)
-			playBtn := row.Objects[3].(*widget.Button)
-			delBtn := row.Objects[4].(*widget.Button)
-
-			resumeNote := ""
-			if ep.ResumeSeconds > 1 {
-				resumeNote = fmt.Sprintf(" (ค้างไว้ที่ %s)", formatDuration(ep.ResumeSeconds))
-			}
-			label.SetText(fmt.Sprintf("%s%s", ep.FileName, resumeNote))
-			check.OnChanged = nil
-			check.SetChecked(ep.Watched)
-			check.OnChanged = func(v bool) {
-				ep.Watched = v
-				state.refreshSeriesRows()
-				_ = SaveLibrary(state.lib)
-			}
-			playBtn.OnTapped = func() {
-				state.playEpisode(ep)
-			}
-			delBtn.OnTapped = func() {
-				state.confirmDeleteEpisode(series, ep)
-			}
-
-			if ep.Exists {
-				status.SetText("")
-				playBtn.Enable()
-			} else {
-				status.Importance = widget.DangerImportance
-				status.SetText("ไฟล์ถูกลบแล้ว")
-				playBtn.Disable()
-			}
-			status.Refresh()
-		},
-	)
+	state.episodeBox = container.NewVBox()
+	state.refreshEpisodeRows()
 
 	seriesScroll := container.NewVScroll(state.seriesBox)
+	episodeScroll := container.NewScroll(state.episodeBox)
+	episodeScroll.Direction = container.ScrollBoth
 
-	split := container.NewHSplit(seriesScroll, state.episodeList)
+	split := container.NewHSplit(seriesScroll, episodeScroll)
 	split.Offset = 0.38
 
 	content := container.NewBorder(toolbar, nil, nil, nil, split)
@@ -235,7 +179,7 @@ func (s *appState) organizeSimilar() {
 			sortSeriesForDisplay(s.lib.SeriesList)
 			s.selectedIdx = -1 // โครงสร้างซีรีส์เปลี่ยนไปแล้ว (แยก/ย้ายไฟล์) ตำแหน่งเดิมใช้ไม่ได้อีกต่อไป
 			s.refreshSeriesRows()
-			s.episodeList.Refresh()
+			s.refreshEpisodeRows()
 		},
 		s.win,
 	)
@@ -340,7 +284,7 @@ func (s *appState) chooseAndScan() {
 			dialog.ShowError(err, s.win)
 		}
 		s.refreshSeriesRows()
-		s.episodeList.Refresh()
+		s.refreshEpisodeRows()
 	}, s.win)
 }
 
@@ -446,7 +390,7 @@ func (s *appState) removeEpisodeFromLibrary(series *Series, ep *Episode) {
 	}
 	sortSeriesForDisplay(s.lib.SeriesList)
 	s.refreshSeriesRows()
-	s.episodeList.Refresh()
+	s.refreshEpisodeRows()
 }
 
 // confirmDeleteSeries ถามว่าจะลบซีรีส์ที่เลือกอยู่แบบไหน: ลบจริงในดิสก์ (ไฟล์/ทั้งโฟลเดอร์) หรือเอาออกจากลิสต์อย่างเดียว
@@ -520,7 +464,7 @@ func (s *appState) removeSeriesFromLibrary(series *Series) {
 		dialog.ShowError(err, s.win)
 	}
 	s.refreshSeriesRows()
-	s.episodeList.Refresh()
+	s.refreshEpisodeRows()
 }
 
 // isUnderRoot ตรวจว่า path อยู่ใต้ root หรือไม่ (เป็นโฟลเดอร์ย่อยจริง ๆ ไม่ใช่แค่ขึ้นต้นด้วยตัวอักษรคล้ายกัน)
@@ -600,7 +544,7 @@ func (s *appState) refreshSeriesRows() {
 		row := newSeriesRow(text, func() {
 			s.selectedIdx = idx
 			s.updateSeriesSelectionHighlight()
-			s.episodeList.Refresh()
+			s.refreshEpisodeRows()
 		})
 		row.SetSelected(idx == s.selectedIdx)
 		s.seriesRows = append(s.seriesRows, row)
@@ -619,6 +563,64 @@ func (s *appState) updateSeriesSelectionHighlight() {
 	for i, row := range s.seriesRows {
 		row.SetSelected(i == s.selectedIdx)
 	}
+}
+
+// refreshEpisodeRows สร้างแถวตอนใหม่ทั้งหมดใน episodeBox ให้ตรงกับซีรีส์ที่เลือกอยู่ (selectedIdx)
+// เรียกทุกครั้งที่รายการตอนควรเปลี่ยน (เลือกซีรีส์ใหม่, ติ๊กดูแล้ว, ลบ, เล่นจบ ฯลฯ) แทน widget.List.Refresh() เดิม
+// แต่ละแถวไม่ตัดคำ (ไม่ wrap) เพื่อให้ชื่อไฟล์ยาว ๆ ดันความกว้างของแถวออกไปได้ แล้วเลื่อนดูได้ผ่าน
+// scroll แนวนอนของ container ที่ครอบอยู่ (ดูตอนสร้าง UI ใน main())
+func (s *appState) refreshEpisodeRows() {
+	s.episodeBox.Objects = nil
+
+	if s.selectedIdx < 0 || s.selectedIdx >= len(s.lib.SeriesList) {
+		s.episodeBox.Refresh()
+		return
+	}
+	series := s.lib.SeriesList[s.selectedIdx]
+
+	for i, ep := range series.Episodes {
+		ep := ep // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+
+		check := widget.NewCheck("", nil)
+		resumeNote := ""
+		if ep.ResumeSeconds > 1 {
+			resumeNote = fmt.Sprintf(" (ค้างไว้ที่ %s)", formatDuration(ep.ResumeSeconds))
+		}
+		label := widget.NewLabel(fmt.Sprintf("%s%s", ep.FileName, resumeNote))
+		status := widget.NewLabel("")
+		playBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), nil)
+		delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
+
+		check.SetChecked(ep.Watched)
+		check.OnChanged = func(v bool) {
+			ep.Watched = v
+			s.refreshSeriesRows()
+			_ = SaveLibrary(s.lib)
+		}
+		playBtn.OnTapped = func() {
+			s.playEpisode(ep)
+		}
+		delBtn.OnTapped = func() {
+			s.confirmDeleteEpisode(series, ep)
+		}
+
+		if ep.Exists {
+			playBtn.Enable()
+		} else {
+			status.Importance = widget.DangerImportance
+			status.SetText("ไฟล์ถูกลบแล้ว")
+			playBtn.Disable()
+		}
+
+		row := container.NewHBox(check, label, status, playBtn, delBtn)
+		s.episodeBox.Add(row)
+
+		if i < len(series.Episodes)-1 {
+			s.episodeBox.Add(widget.NewSeparator())
+		}
+	}
+
+	s.episodeBox.Refresh()
 }
 
 // sortSeriesForDisplay จัดลำดับซีรีส์สำหรับแสดงผล: โฟลเดอร์แม่ (IsRoot) มาก่อนเสมอ
@@ -697,7 +699,7 @@ func (s *appState) renameSelectedSeries() {
 			dialog.ShowError(err, s.win)
 		}
 		s.refreshSeriesRows()
-		s.episodeList.Refresh()
+		s.refreshEpisodeRows()
 	}, s.win)
 	d.Resize(fyne.NewSize(420, 160))
 	d.Show()

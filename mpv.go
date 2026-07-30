@@ -133,7 +133,7 @@ func (s *appState) playEpisodeTracked(ep *Episode) {
 				dialog.ShowError(saveErr, s.win)
 			}
 			s.refreshSeriesRows()
-			s.episodeList.Refresh()
+			s.refreshEpisodeRows()
 		})
 	}()
 }
@@ -245,7 +245,7 @@ func (s *appState) playSeriesTracked(series *Series) {
 					dialog.ShowError(saveErr, s.win)
 				}
 				s.refreshSeriesRows()
-				s.episodeList.Refresh()
+				s.refreshEpisodeRows()
 			})
 		}
 
