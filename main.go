@@ -133,12 +133,29 @@ func (s *appState) organizeSimilar() {
 	series := s.lib.SeriesList[s.selectedIdx]
 
 	var siblings []*Series
+	existingRootPaths := map[string]bool{}
 	for _, sr := range s.lib.SeriesList {
 		if sr == series || sr.IsRoot {
 			continue
 		}
 		if filepath.Dir(sr.RootPath) == series.RootPath {
 			siblings = append(siblings, sr)
+			existingRootPaths[sr.RootPath] = true
+		}
+	}
+
+	// เพิ่มโฟลเดอร์ย่อยที่มีอยู่จริงในดิสก์แต่ยังไม่มีไฟล์วิดีโอข้างใน (เลยไม่เคยถูก track ไว้ในลิสต์มาก่อน)
+	// ให้เป็นตัวเลือกปลายทางได้ด้วย เผื่อมีไฟล์หลวม ๆ ชื่อคล้ายโฟลเดอร์เปล่านั้นอยู่
+	if entries, err := os.ReadDir(series.RootPath); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			fullPath := filepath.Join(series.RootPath, entry.Name())
+			if existingRootPaths[fullPath] {
+				continue // มีอยู่แล้วในลิสต์ ไม่ต้องเพิ่มซ้ำ
+			}
+			siblings = append(siblings, &Series{Name: entry.Name(), RootPath: fullPath})
 		}
 	}
 
@@ -204,6 +221,18 @@ func (s *appState) applyGrouping(orig *Series, proposals []GroupProposal) error 
 		if p.ExistingSeries != nil {
 			target = p.ExistingSeries
 			newDir = target.RootPath
+			// กรณีโฟลเดอร์เปล่าที่ยังไม่เคยถูก track มาก่อน (ไม่มีไฟล์วิดีโอ เลยไม่เคยอยู่ใน lib.SeriesList)
+			// ต้องเพิ่มเข้าลิสต์ตอนนี้เอง เพราะจะมีไฟล์ย้ายเข้ามาแล้ว
+			tracked := false
+			for _, sr := range s.lib.SeriesList {
+				if sr == target {
+					tracked = true
+					break
+				}
+			}
+			if !tracked {
+				s.lib.SeriesList = append(s.lib.SeriesList, target)
+			}
 		} else {
 			folderName := sanitizeFolderName(p.FolderName)
 			newDir = filepath.Join(orig.RootPath, folderName)
