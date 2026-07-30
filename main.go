@@ -21,13 +21,14 @@ import (
 )
 
 type appState struct {
-	lib         *Library
-	win         fyne.Window
-	seriesBox   *fyne.Container // VBox ของแถวซีรีส์ (แทน widget.List เดิม เพื่อให้แต่ละแถวสูงตามเนื้อหาได้)
-	seriesRows  []*seriesRow
-	episodeBox  *fyne.Container // VBox ของแถวตอน (แทน widget.List เดิม เพื่อให้เลื่อนแนวนอนได้ตอนชื่อไฟล์ยาว)
-	selectedIdx int
-	rootPath    string
+	lib           *Library
+	win           fyne.Window
+	seriesBox     *fyne.Container // VBox ของแถวซีรีส์ (แทน widget.List เดิม เพื่อให้แต่ละแถวสูงตามเนื้อหาได้)
+	seriesRows    []*seriesRow
+	episodeBox    *fyne.Container   // VBox ของแถวตอน (แทน widget.List เดิม เพื่อให้เลื่อนแนวนอนได้ตอนชื่อไฟล์ยาว)
+	episodeScroll *container.Scroll // ตัวครอบ episodeBox เก็บไว้เพื่อสั่ง Refresh/เลื่อนกลับบนสุดได้ตรง ๆ
+	selectedIdx   int
+	rootPath      string
 }
 
 // โหลด icon
@@ -108,13 +109,13 @@ func main() {
 	state.refreshSeriesRows()
 
 	state.episodeBox = container.NewVBox()
+	state.episodeScroll = container.NewScroll(state.episodeBox)
+	state.episodeScroll.Direction = container.ScrollBoth
 	state.refreshEpisodeRows()
 
 	seriesScroll := container.NewVScroll(state.seriesBox)
-	episodeScroll := container.NewScroll(state.episodeBox)
-	episodeScroll.Direction = container.ScrollBoth
 
-	split := container.NewHSplit(seriesScroll, episodeScroll)
+	split := container.NewHSplit(seriesScroll, state.episodeScroll)
 	split.Offset = 0.38
 
 	content := container.NewBorder(toolbar, nil, nil, nil, split)
@@ -545,6 +546,9 @@ func (s *appState) refreshSeriesRows() {
 			s.selectedIdx = idx
 			s.updateSeriesSelectionHighlight()
 			s.refreshEpisodeRows()
+			if s.episodeScroll != nil {
+				s.episodeScroll.ScrollToTop()
+			}
 		})
 		row.SetSelected(idx == s.selectedIdx)
 		s.seriesRows = append(s.seriesRows, row)
@@ -574,6 +578,9 @@ func (s *appState) refreshEpisodeRows() {
 
 	if s.selectedIdx < 0 || s.selectedIdx >= len(s.lib.SeriesList) {
 		s.episodeBox.Refresh()
+		if s.episodeScroll != nil {
+			s.episodeScroll.Refresh()
+		}
 		return
 	}
 	series := s.lib.SeriesList[s.selectedIdx]
@@ -621,6 +628,11 @@ func (s *appState) refreshEpisodeRows() {
 	}
 
 	s.episodeBox.Refresh()
+	// Refresh ตัว Scroll ที่ครอบอยู่ด้วยตรง ๆ ไม่งั้นบางครั้ง Fyne ไม่คำนวณขนาดเนื้อหาใหม่ให้
+	// (ต้องรอ event อื่นมากระตุ้น เช่นเอาเมาส์ไปจ่อ scrollbar ถึงจะ redraw ให้เห็น)
+	if s.episodeScroll != nil {
+		s.episodeScroll.Refresh()
+	}
 }
 
 // sortSeriesForDisplay จัดลำดับซีรีส์สำหรับแสดงผล: โฟลเดอร์แม่ (IsRoot) มาก่อนเสมอ
