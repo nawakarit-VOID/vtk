@@ -90,6 +90,9 @@ func main() {
 	scanBtn := widget.NewButtonWithIcon("สแกนโฟลเดอร์", theme.FolderOpenIcon(), func() {
 		state.chooseAndScan()
 	})
+	refreshAllBtn := widget.NewButtonWithIcon("รีเฟรชโฟลเดอร์แม่ทั้งหมด", theme.ViewRefreshIcon(), func() {
+		state.refreshAllRootFolders()
+	})
 	organizeBtn := widget.NewButton("จัดกลุ่มไฟล์ชื่อคล้ายกัน", func() {
 		state.organizeSimilar()
 	})
@@ -103,7 +106,7 @@ func main() {
 	renameSeriesBtn := widget.NewButtonWithIcon("แก้ชื่อ", theme.DocumentCreateIcon(), func() {
 		state.renameSelectedSeries()
 	})
-	toolbar := container.NewHBox(scanBtn, organizeBtn, playSeriesBtn, renameSeriesBtn, deleteSeriesBtn)
+	toolbar := container.NewHBox(scanBtn, refreshAllBtn, organizeBtn, playSeriesBtn, renameSeriesBtn, deleteSeriesBtn)
 
 	state.seriesBox = container.NewVBox()
 	state.refreshSeriesRows()
@@ -288,6 +291,44 @@ func (s *appState) applyGrouping(orig *Series, proposals []GroupProposal) error 
 	}
 
 	return SaveLibrary(s.lib)
+}
+
+// refreshAllRootFolders สแกนซ้ำทุกโฟลเดอร์แม่ที่เคย track ไว้ (IsRoot = true ทุกตัวใน library)
+// เพื่ออัปเดตโฟลเดอร์ย่อยใหม่/ไฟล์ใหม่ที่เพิ่มเข้ามาทีหลัง โดยไม่ต้องเปิด dialog เลือกทีละโฟลเดอร์
+// ถ้าโฟลเดอร์แม่ไหนสแกนไม่สำเร็จ (เช่น USB ไม่ได้เสียบ) จะข้ามไปตัวถัดไป ไม่หยุดทั้งหมด แล้วสรุป error รวมท้ายสุด
+func (s *appState) refreshAllRootFolders() {
+	var rootPaths []string
+	for _, sr := range s.lib.SeriesList {
+		if sr.IsRoot {
+			rootPaths = append(rootPaths, sr.RootPath)
+		}
+	}
+	if len(rootPaths) == 0 {
+		dialog.ShowInformation("รีเฟรชโฟลเดอร์แม่", "ยังไม่เคยสแกนโฟลเดอร์แม่ไว้เลย ลองกด \"สแกนโฟลเดอร์\" ก่อน", s.win)
+		return
+	}
+
+	var failed []string
+	for _, path := range rootPaths {
+		scanned, err := ScanFolder(path)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s (%v)", path, err))
+			continue
+		}
+		MergeScan(s.lib, scanned, path)
+	}
+
+	sortSeriesForDisplay(s.lib.SeriesList)
+	s.selectedIdx = -1 // ลำดับซีรีส์อาจเปลี่ยนไปแล้ว ตำแหน่งที่เคยเลือกไว้ไม่ตรงของเดิมอีกต่อไป
+	if err := SaveLibrary(s.lib); err != nil {
+		dialog.ShowError(err, s.win)
+	}
+	s.refreshSeriesRows()
+	s.refreshEpisodeRows()
+
+	if len(failed) > 0 {
+		dialog.ShowError(fmt.Errorf("บางโฟลเดอร์สแกนไม่สำเร็จ:\n%s", strings.Join(failed, "\n")), s.win)
+	}
 }
 
 func (s *appState) chooseAndScan() {
@@ -572,7 +613,7 @@ func (s *appState) refreshSeriesRows() {
 
 		nameLine := series.Name
 		if series.IsRoot {
-			nameLine = "🏠 " + nameLine + " (โฟลเดอร์สแกน)"
+			nameLine = "🏠 " + nameLine + " (โฟลเดอร์ที่สแกน)"
 		} else if series.Starred {
 			nameLine = "★ " + nameLine
 		}
