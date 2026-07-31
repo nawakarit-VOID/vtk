@@ -568,8 +568,13 @@ func (s *appState) refreshSeriesRows() {
 
 	for i, series := range s.lib.SeriesList {
 		idx := i // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+
+		nameLine := series.Name
+		if series.IsRoot {
+			nameLine = "🏠 " + nameLine + " (โฟลเดอร์ที่แสกน)"
+		}
 		text := fmt.Sprintf("%s\nดูล่าสุด: ตอน %d  (ดูแล้ว %d/%d ตอน)",
-			series.Name, series.LastWatchedEpisode(), series.WatchedCount(), series.TotalCount())
+			nameLine, series.LastWatchedEpisode(), series.WatchedCount(), series.TotalCount())
 
 		row := newSeriesRow(text, func() {
 			s.selectedIdx = idx
