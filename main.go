@@ -567,22 +567,30 @@ func (s *appState) refreshSeriesRows() {
 	s.seriesRows = nil
 
 	for i, series := range s.lib.SeriesList {
-		idx := i // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+		idx := i     // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+		sr := series // capture ไว้ในลูป สำหรับ closure ของปุ่มดาว
 
 		nameLine := series.Name
 		if series.IsRoot {
-			nameLine = "🏠 " + nameLine + " (โฟลเดอร์ที่แสกน)"
+			nameLine = "🏠 " + nameLine + " (โฟลเดอร์สแกน)"
+		} else if series.Starred {
+			nameLine = "★ " + nameLine
 		}
 		text := fmt.Sprintf("%s\nดูล่าสุด: ตอน %d  (ดูแล้ว %d/%d ตอน)",
 			nameLine, series.LastWatchedEpisode(), series.WatchedCount(), series.TotalCount())
 
-		row := newSeriesRow(text, func() {
+		row := newSeriesRow(text, !series.IsRoot, series.Starred, func() {
 			s.selectedIdx = idx
 			s.updateSeriesSelectionHighlight()
 			s.refreshEpisodeRows()
 			if s.episodeScroll != nil {
 				s.episodeScroll.ScrollToTop()
 			}
+		}, func() {
+			sr.Starred = !sr.Starred
+			sortSeriesForDisplay(s.lib.SeriesList)
+			_ = SaveLibrary(s.lib)
+			s.refreshSeriesRows()
 		})
 		row.SetSelected(idx == s.selectedIdx)
 		s.seriesRows = append(s.seriesRows, row)
@@ -669,14 +677,19 @@ func (s *appState) refreshEpisodeRows() {
 	}
 }
 
-// sortSeriesForDisplay จัดลำดับซีรีส์สำหรับแสดงผล: โฟลเดอร์แม่ (IsRoot) มาก่อนเสมอ
-// ไม่ว่าจะเคยสแกนมากี่รอบก็ตาม ส่วนที่เหลือเรียงตามตัวอักษร
+// sortSeriesForDisplay จัดลำดับซีรีส์สำหรับแสดงผล:
+//  1. โฟลเดอร์แม่ (IsRoot) มาก่อนเสมอ ไม่ว่าจะเคยสแกนมากี่รอบก็ตาม
+//  2. โฟลเดอร์ลูกที่ติดดาวไว้ มาก่อนโฟลเดอร์ลูกทั่วไป (แต่ยังคงอยู่หลังโฟลเดอร์แม่ทั้งหมด)
+//  3. ที่เหลือเรียงตามชื่อ (natural sort เข้าใจตัวเลข)
 func sortSeriesForDisplay(list []*Series) {
 	sort.SliceStable(list, func(i, j int) bool {
 		if list[i].IsRoot != list[j].IsRoot {
 			return list[i].IsRoot
 		}
-		return list[i].Name < list[j].Name
+		if list[i].Starred != list[j].Starred {
+			return list[i].Starred
+		}
+		return naturalLess(list[i].Name, list[j].Name)
 	})
 }
 

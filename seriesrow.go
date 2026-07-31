@@ -5,6 +5,7 @@ package main
 
 import (
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -13,26 +14,50 @@ import (
 // (widget.List บังคับทุกแถวสูงเท่ากันหมด เพราะเป็น list แบบ virtualized)
 type seriesRow struct {
 	widget.BaseWidget
+	content    *fyne.Container
 	label      *widget.Label
+	starBtn    *widget.Button
 	onTapped   func()
 	isSelected bool
 }
 
-func newSeriesRow(text string, onTapped func()) *seriesRow {
+// newSeriesRow สร้างแถวซีรีส์ 1 แถว
+//   - showStar: แสดงปุ่มติดดาวไหม (โฟลเดอร์แม่ไม่ต้องมี เพราะอยู่บนสุดอยู่แล้ว)
+//   - starred: สถานะติดดาวปัจจุบัน (ใช้ตอน showStar = true เท่านั้น)
+//   - onTapped: กดที่แถว (เลือกดูซีรีส์นี้)
+//   - onStarTapped: กดปุ่มดาว (สลับสถานะติดดาว) แยกจาก onTapped ไม่ทำให้แถวถูกเลือกไปด้วย
+func newSeriesRow(text string, showStar bool, starred bool, onTapped func(), onStarTapped func()) *seriesRow {
 	r := &seriesRow{
 		label:    widget.NewLabel(text),
 		onTapped: onTapped,
 	}
 	r.label.Wrapping = fyne.TextWrapWord
+
+	if showStar {
+		r.starBtn = widget.NewButton(starGlyph(starred), onStarTapped)
+		r.starBtn.Importance = widget.LowImportance
+		r.content = container.NewBorder(nil, nil, nil, r.starBtn, r.label)
+	} else {
+		r.content = container.NewBorder(nil, nil, nil, nil, r.label)
+	}
+
 	r.ExtendBaseWidget(r)
 	return r
 }
 
+func starGlyph(starred bool) string {
+	if starred {
+		return "★"
+	}
+	return "☆"
+}
+
 func (r *seriesRow) CreateRenderer() fyne.WidgetRenderer {
-	return widget.NewSimpleRenderer(r.label)
+	return widget.NewSimpleRenderer(r.content)
 }
 
 // Tapped ทำให้แถวนี้กดเลือกได้ (implement fyne.Tappable)
+// (ปุ่มดาวข้างในจะรับ tap ของตัวเองไปก่อนอยู่แล้ว ไม่ทำให้ Tapped ของแถวถูกเรียกซ้ำ)
 func (r *seriesRow) Tapped(_ *fyne.PointEvent) {
 	if r.onTapped != nil {
 		r.onTapped()
@@ -41,6 +66,13 @@ func (r *seriesRow) Tapped(_ *fyne.PointEvent) {
 
 func (r *seriesRow) SetText(text string) {
 	r.label.SetText(text)
+}
+
+// SetStarred อัปเดตหน้าปุ่มดาวให้ตรงกับสถานะปัจจุบัน (เรียกหลังสลับสถานะ)
+func (r *seriesRow) SetStarred(starred bool) {
+	if r.starBtn != nil {
+		r.starBtn.SetText(starGlyph(starred))
+	}
 }
 
 // SetSelected ปรับสไตล์ให้เห็นว่าแถวนี้ถูกเลือกอยู่ (ตัวหนา/สีเน้น) แทนไฮไลต์แบบ widget.List เดิม

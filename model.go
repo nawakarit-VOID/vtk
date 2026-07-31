@@ -18,6 +18,7 @@ type Series struct {
 	Name     string     `json:"name"`
 	RootPath string     `json:"root_path"`
 	IsRoot   bool       `json:"is_root"` // true = ไฟล์หลวม ๆ ที่อยู่ตรงโฟลเดอร์แม่ (ตัวที่กดสแกน) โดยตรง ไม่ใช่โฟลเดอร์ย่อย
+	Starred  bool       `json:"starred"` // true = ติดดาวไว้ (เฉพาะโฟลเดอร์ลูก) จะถูกเลื่อนขึ้นมาอยู่บนสุดของกลุ่มโฟลเดอร์ลูก
 	Episodes []*Episode `json:"episodes"`
 }
 
