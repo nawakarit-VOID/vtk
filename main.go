@@ -679,6 +679,7 @@ func (s *appState) refreshEpisodeRows() {
 		label := widget.NewLabel(fmt.Sprintf("%s%s", ep.FileName, resumeNote))
 		status := widget.NewLabel("")
 		playBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), nil)
+		renameBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), nil)
 		delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
 
 		check.SetChecked(ep.Watched)
@@ -690,19 +691,24 @@ func (s *appState) refreshEpisodeRows() {
 		playBtn.OnTapped = func() {
 			s.playEpisode(ep)
 		}
+		renameBtn.OnTapped = func() {
+			s.renameEpisode(ep)
+		}
 		delBtn.OnTapped = func() {
 			s.confirmDeleteEpisode(series, ep)
 		}
 
 		if ep.Exists {
 			playBtn.Enable()
+			renameBtn.Enable()
 		} else {
 			status.Importance = widget.DangerImportance
 			status.SetText("ไฟล์ถูกลบแล้ว")
 			playBtn.Disable()
+			renameBtn.Disable()
 		}
 
-		row := container.NewHBox(check, label, status, playBtn, delBtn)
+		row := container.NewHBox(check, label, status, playBtn, renameBtn, delBtn)
 		s.episodeBox.Add(row)
 
 		if i < len(series.Episodes)-1 {
@@ -795,6 +801,56 @@ func (s *appState) renameSelectedSeries() {
 		}
 
 		sortSeriesForDisplay(s.lib.SeriesList)
+		if err := SaveLibrary(s.lib); err != nil {
+			dialog.ShowError(err, s.win)
+		}
+		s.refreshSeriesRows()
+		s.refreshEpisodeRows()
+	}, s.win)
+	d.Resize(fyne.NewSize(420, 160))
+	d.Show()
+}
+
+// renameEpisode ให้ผู้ใช้แก้ชื่อไฟล์วิดีโอ 1 ไฟล์ เปลี่ยนชื่อไฟล์จริงในดิสก์ให้เลย (os.Rename)
+// แก้ได้ทั้งชื่อและนามสกุล (พิมพ์ทับได้เต็มที่) เช็คชื่อชนกับไฟล์อื่นในโฟลเดอร์เดียวกันก่อนด้วย
+func (s *appState) renameEpisode(ep *Episode) {
+	entry := widget.NewEntry()
+	entry.SetText(ep.FileName)
+
+	content := container.NewVBox(
+		widget.NewLabel("จะเปลี่ยนชื่อไฟล์จริงในดิสก์ (แก้นามสกุลไฟล์ได้ด้วยถ้าต้องการ)"),
+		entry,
+	)
+
+	d := dialog.NewCustomConfirm("แก้ชื่อไฟล์", "บันทึก", "ยกเลิก", content, func(ok bool) {
+		if !ok {
+			return
+		}
+		newName := strings.TrimSpace(entry.Text)
+		if newName == "" {
+			dialog.ShowInformation("แก้ชื่อไฟล์", "ชื่อห้ามเว้นว่าง", s.win)
+			return
+		}
+		newName = sanitizeFolderName(newName) // กันอักขระที่ใช้ในชื่อไฟล์ไม่ได้ เช่น / \ : * ? " < > |
+
+		dir := filepath.Dir(ep.FilePath)
+		newPath := filepath.Join(dir, newName)
+		if newPath == ep.FilePath {
+			return // ชื่อเดิม ไม่ต้องทำอะไร
+		}
+		if _, err := os.Stat(newPath); err == nil {
+			dialog.ShowError(fmt.Errorf("มีไฟล์ชื่อ \"%s\" อยู่แล้ว กรุณาตั้งชื่ออื่น", newName), s.win)
+			return
+		}
+		if err := os.Rename(ep.FilePath, newPath); err != nil {
+			dialog.ShowError(fmt.Errorf("เปลี่ยนชื่อไฟล์ไม่สำเร็จ: %w", err), s.win)
+			return
+		}
+
+		ep.FilePath = newPath
+		ep.FileName = newName
+		ep.EpisodeNumber = ExtractEpisodeNumber(newName)
+
 		if err := SaveLibrary(s.lib); err != nil {
 			dialog.ShowError(err, s.win)
 		}
