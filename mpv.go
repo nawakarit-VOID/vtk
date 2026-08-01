@@ -50,6 +50,20 @@ func formatDuration(seconds float64) string {
 	return fmt.Sprintf("%d:%02d", m, sec)
 }
 
+// formatHoursMinutes แปลงวินาทีเป็นข้อความ "X ชั่วโมง Y นาที" อ่านง่าย ใช้กับหน้าสรุปสถิติ
+func formatHoursMinutes(seconds float64) string {
+	if seconds < 0 {
+		seconds = 0
+	}
+	totalMinutes := int(seconds) / 60
+	h := totalMinutes / 60
+	m := totalMinutes % 60
+	if h > 0 {
+		return fmt.Sprintf("%d ชั่วโมง %d นาที", h, m)
+	}
+	return fmt.Sprintf("%d นาที", m)
+}
+
 // playEpisodeTracked เล่นไฟล์ด้วย mpv พร้อมติดตามความคืบหน้าผ่าน IPC socket:
 //   - เล่นจบจริง (mpv รายงาน reason "eof") -> ติ๊กว่าดูแล้วอัตโนมัติ เคลียร์จุดค้าง
 //   - ปิดกลางคัน -> บันทึกวินาทีล่าสุดที่เล่นถึงไว้เป็นจุดค้าง (ถ้าเกิน resumeThresholdSeconds)
@@ -82,15 +96,22 @@ func (s *appState) playEpisodeTracked(ep *Episode) {
 		}
 		defer conn.Close()
 
-		// สั่งให้ mpv ส่งค่า time-pos กลับมาทุกครั้งที่ตำแหน่งเล่นเปลี่ยน
+		// สั่งให้ mpv ส่งค่า time-pos และ duration กลับมาทุกครั้งที่ค่าเปลี่ยน
 		observeCmd, err := json.Marshal(map[string]interface{}{
 			"command": []interface{}{"observe_property", 1, "time-pos"},
 		})
 		if err == nil {
 			_, _ = conn.Write(append(observeCmd, '\n'))
 		}
+		observeDurCmd, err := json.Marshal(map[string]interface{}{
+			"command": []interface{}{"observe_property", 2, "duration"},
+		})
+		if err == nil {
+			_, _ = conn.Write(append(observeDurCmd, '\n'))
+		}
 
 		var lastPos float64
+		var lastDuration float64
 		var reason string
 
 		scanner := bufio.NewScanner(conn)
@@ -101,9 +122,14 @@ func (s *appState) playEpisodeTracked(ep *Episode) {
 			}
 			switch msg.Event {
 			case "property-change":
-				if msg.Name == "time-pos" {
+				switch msg.Name {
+				case "time-pos":
 					if f, ok := msg.Data.(float64); ok {
 						lastPos = f
+					}
+				case "duration":
+					if f, ok := msg.Data.(float64); ok && f > 0 {
+						lastDuration = f
 					}
 				}
 			case "end-file":
@@ -118,6 +144,9 @@ func (s *appState) playEpisodeTracked(ep *Episode) {
 
 		_ = cmd.Wait()
 
+		if lastDuration > 0 {
+			ep.DurationSeconds = lastDuration
+		}
 		if reason == "eof" {
 			ep.Watched = true
 			ep.ResumeSeconds = 0
@@ -220,17 +249,27 @@ func (s *appState) playSeriesTracked(series *Series) {
 		if err == nil {
 			_, _ = conn.Write(append(observePlaylistPos, '\n'))
 		}
+		observeDur, err := json.Marshal(map[string]interface{}{
+			"command": []interface{}{"observe_property", 3, "duration"},
+		})
+		if err == nil {
+			_, _ = conn.Write(append(observeDur, '\n'))
+		}
 
 		currentIdx := 0
 		var lastPos float64
+		var lastDuration float64
 		seekedFor := -1 // index ที่สั่ง seek ไปแล้ว กันสั่งซ้ำ
 
 		// finalizeEpisode บันทึกผลของตอนที่เพิ่งเล่นจบ (idx) เหมือน logic ของ playEpisodeTracked
-		finalizeEpisode := func(idx int, reason string, pos float64) {
+		finalizeEpisode := func(idx int, reason string, pos float64, dur float64) {
 			if idx < 0 || idx >= len(eps) {
 				return
 			}
 			ep := eps[idx]
+			if dur > 0 {
+				ep.DurationSeconds = dur
+			}
 			if reason == "eof" {
 				ep.Watched = true
 				ep.ResumeSeconds = 0
@@ -282,6 +321,10 @@ func (s *appState) playSeriesTracked(series *Series) {
 					if f, ok := msg.Data.(float64); ok {
 						lastPos = f
 					}
+				case "duration":
+					if f, ok := msg.Data.(float64); ok && f > 0 {
+						lastDuration = f
+					}
 				case "playlist-pos":
 					if f, ok := msg.Data.(float64); ok {
 						currentIdx = int(f)
@@ -289,8 +332,9 @@ func (s *appState) playSeriesTracked(series *Series) {
 					}
 				}
 			case "end-file":
-				finalizeEpisode(currentIdx, msg.Reason, lastPos)
+				finalizeEpisode(currentIdx, msg.Reason, lastPos, lastDuration)
 				lastPos = 0
+				lastDuration = 0
 			}
 		}
 		if err := scanner.Err(); err != nil {

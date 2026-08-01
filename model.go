@@ -5,12 +5,13 @@ package main
 
 // Episode คือไฟล์วิดีโอ 1 ตอน
 type Episode struct {
-	FilePath      string  `json:"file_path"`
-	FileName      string  `json:"file_name"`
-	EpisodeNumber int     `json:"episode_number"`
-	Watched       bool    `json:"watched"`
-	Exists        bool    `json:"exists"`         // false = ไฟล์ถูกลบไปแล้วจากดิสก์
-	ResumeSeconds float64 `json:"resume_seconds"` // จุดที่เล่นค้างไว้ (วินาที) มาจากการ track ผ่าน mpv IPC, 0 = ไม่มีจุดค้าง
+	FilePath        string  `json:"file_path"`
+	FileName        string  `json:"file_name"`
+	EpisodeNumber   int     `json:"episode_number"`
+	Watched         bool    `json:"watched"`
+	Exists          bool    `json:"exists"`           // false = ไฟล์ถูกลบไปแล้วจากดิสก์
+	ResumeSeconds   float64 `json:"resume_seconds"`   // จุดที่เล่นค้างไว้ (วินาที) มาจากการ track ผ่าน mpv IPC, 0 = ไม่มีจุดค้าง
+	DurationSeconds float64 `json:"duration_seconds"` // ความยาวไฟล์ (วินาที) รู้ได้ก็ต่อเมื่อเคยเล่นผ่าน mpv ในแอปนี้อย่างน้อย 1 ครั้ง, 0 = ยังไม่ทราบ
 }
 
 // Series คือกลุ่มของ Episode (1 โฟลเดอร์ = 1 ซีรีส์)

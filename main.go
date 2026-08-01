@@ -107,7 +107,10 @@ func main() {
 	renameSeriesBtn := widget.NewButtonWithIcon("แก้ชื่อ", theme.DocumentCreateIcon(), func() {
 		state.renameSelectedSeries()
 	})
-	toolbar := container.NewHBox(scanBtn, refreshAllBtn, organizeBtn, playSeriesBtn, renameSeriesBtn, deleteSeriesBtn)
+	statsBtn := widget.NewButtonWithIcon("สถิติ", theme.InfoIcon(), func() {
+		state.showStatistics()
+	})
+	toolbar := container.NewHBox(scanBtn, refreshAllBtn, organizeBtn, playSeriesBtn, renameSeriesBtn, deleteSeriesBtn, statsBtn)
 
 	state.seriesBox = container.NewVBox()
 	state.refreshSeriesRows()
@@ -300,6 +303,49 @@ func (s *appState) applyGrouping(orig *Series, proposals []GroupProposal) error 
 	}
 
 	return SaveLibrary(s.lib)
+}
+
+// showStatistics คำนวณและแสดงสรุปสถิติ: จำนวนตอนทั้งหมด/ดูแล้ว/เหลือ และเวลาที่ดูไปรวม (ประมาณ)
+// นับเฉพาะไฟล์ที่ Exists อยู่จริง เวลาที่ดูไปรวมจะแม่นยำเฉพาะไฟล์ที่เคยเล่นผ่าน mpv ในแอปนี้
+// อย่างน้อย 1 ครั้ง (ถึงจะรู้ DurationSeconds) ไฟล์ที่ติ๊กว่าดูแล้วเองโดยไม่เคยเล่นผ่านแอปจะไม่ถูกนับเวลา
+func (s *appState) showStatistics() {
+	var totalEpisodes, watchedCount, remainingCount, unknownDurationWatched int
+	var totalWatchedSeconds float64
+
+	for _, series := range s.lib.SeriesList {
+		for _, ep := range series.Episodes {
+			if !ep.Exists {
+				continue
+			}
+			totalEpisodes++
+			if ep.Watched {
+				watchedCount++
+				if ep.DurationSeconds > 0 {
+					totalWatchedSeconds += ep.DurationSeconds
+				} else {
+					unknownDurationWatched++
+				}
+			} else {
+				remainingCount++
+				if ep.ResumeSeconds > 0 {
+					totalWatchedSeconds += ep.ResumeSeconds // นับความคืบหน้าที่ดูไปแล้วบางส่วนด้วย
+				}
+			}
+		}
+	}
+
+	msg := fmt.Sprintf(
+		"ตอนทั้งหมด: %d ตอน\nดูแล้ว: %d ตอน\nเหลืออีก: %d ตอน\n\nเวลาที่ดูไปรวม (ประมาณ): %s",
+		totalEpisodes, watchedCount, remainingCount, formatHoursMinutes(totalWatchedSeconds),
+	)
+	if unknownDurationWatched > 0 {
+		msg += fmt.Sprintf(
+			"\n\n(มี %d ตอนที่ดูแล้วแต่ยังไม่ทราบความยาว เพราะไม่เคยเปิดเล่นผ่าน mpv ในแอปนี้ เลยไม่ถูกนับรวมเวลาด้านบน)",
+			unknownDurationWatched,
+		)
+	}
+
+	dialog.ShowInformation("สรุปสถิติ", msg, s.win)
 }
 
 // refreshAllRootFolders สแกนซ้ำทุกโฟลเดอร์แม่ที่เคย track ไว้ (IsRoot = true ทุกตัวใน library)
