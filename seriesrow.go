@@ -19,6 +19,7 @@ type seriesRow struct {
 	starBtn    *widget.Button
 	onTapped   func()
 	isSelected bool
+	libIndex   int // ตำแหน่งจริงใน lib.SeriesList (ไม่ใช่ตำแหน่งในลิสต์ที่กรองแล้ว ใช้เทียบ selectedIdx ให้ถูกต้อง)
 }
 
 // newSeriesRow สร้างแถวซีรีส์ 1 แถว

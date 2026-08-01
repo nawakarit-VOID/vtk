@@ -25,6 +25,7 @@ type appState struct {
 	win           fyne.Window
 	seriesBox     *fyne.Container // VBox ของแถวซีรีส์ (แทน widget.List เดิม เพื่อให้แต่ละแถวสูงตามเนื้อหาได้)
 	seriesRows    []*seriesRow
+	searchQuery   string            // คำค้นหาปัจจุบัน (กรองรายชื่อซีรีส์ทางซ้าย)
 	episodeBox    *fyne.Container   // VBox ของแถวตอน (แทน widget.List เดิม เพื่อให้เลื่อนแนวนอนได้ตอนชื่อไฟล์ยาว)
 	episodeScroll *container.Scroll // ตัวครอบ episodeBox เก็บไว้เพื่อสั่ง Refresh/เลื่อนกลับบนสุดได้ตรง ๆ
 	selectedIdx   int
@@ -118,7 +119,15 @@ func main() {
 
 	seriesScroll := container.NewVScroll(state.seriesBox)
 
-	split := container.NewHSplit(seriesScroll, state.episodeScroll)
+	searchEntry := widget.NewEntry()
+	searchEntry.SetPlaceHolder("ค้นหาชื่อซีรีส์...")
+	searchEntry.OnChanged = func(text string) {
+		state.searchQuery = text
+		state.refreshSeriesRows()
+	}
+	seriesPanel := container.NewBorder(searchEntry, nil, nil, nil, seriesScroll)
+
+	split := container.NewHSplit(seriesPanel, state.episodeScroll)
 	split.Offset = 0.38
 
 	content := container.NewBorder(toolbar, nil, nil, nil, split)
@@ -601,19 +610,40 @@ func (s *appState) playSelectedSeries() {
 }
 
 // refreshSeriesRows สร้างแถวซีรีส์ใหม่ทั้งหมดใน seriesBox ให้ตรงกับ lib.SeriesList ปัจจุบัน
-// เรียกทุกครั้งที่ลิสต์ซีรีส์เปลี่ยน (สแกน, ลบ, จัดกลุ่ม, แก้ชื่อ ฯลฯ) แทนที่ widget.List.Refresh() เดิม
+// (กรองตาม s.searchQuery ถ้ามีการพิมพ์ค้นหาไว้) เรียกทุกครั้งที่ลิสต์ซีรีส์เปลี่ยน
+// (สแกน, ลบ, จัดกลุ่ม, แก้ชื่อ, พิมพ์ค้นหา ฯลฯ) แทนที่ widget.List.Refresh() เดิม
 // แต่ละแถวจองความสูงตามเนื้อหาจริงของตัวเอง (ชื่อยาวแค่ไหนก็ไม่ล้น เพราะไม่ใช่ list แบบ virtualized)
 func (s *appState) refreshSeriesRows() {
 	s.seriesBox.Objects = nil
 	s.seriesRows = nil
 
+	query := strings.ToLower(strings.TrimSpace(s.searchQuery))
+
+	var matchedIdx []int
 	for i, series := range s.lib.SeriesList {
-		idx := i     // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+		if query == "" || strings.Contains(strings.ToLower(series.Name), query) {
+			matchedIdx = append(matchedIdx, i)
+		}
+	}
+
+	if len(matchedIdx) == 0 {
+		msg := "ยังไม่มีซีรีส์ในลิสต์ ลองกด \"สแกนโฟลเดอร์\" ก่อน"
+		if query != "" {
+			msg = "ไม่พบซีรีส์ที่ตรงกับคำค้นหา"
+		}
+		s.seriesBox.Add(widget.NewLabel(msg))
+		s.seriesBox.Refresh()
+		return
+	}
+
+	for pos, i := range matchedIdx {
+		idx := i // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+		series := s.lib.SeriesList[idx]
 		sr := series // capture ไว้ในลูป สำหรับ closure ของปุ่มดาว
 
 		nameLine := series.Name
 		if series.IsRoot {
-			nameLine = "🏠 " + nameLine + " (โฟลเดอร์ที่สแกน)"
+			nameLine = "🏠 " + nameLine + " (โฟลเดอร์แม่)"
 		} else if series.Starred {
 			nameLine = "★ " + nameLine
 		}
@@ -634,10 +664,11 @@ func (s *appState) refreshSeriesRows() {
 			s.refreshSeriesRows()
 		})
 		row.SetSelected(idx == s.selectedIdx)
+		row.libIndex = idx
 		s.seriesRows = append(s.seriesRows, row)
 		s.seriesBox.Add(row)
 
-		if i < len(s.lib.SeriesList)-1 {
+		if pos < len(matchedIdx)-1 {
 			s.seriesBox.Add(widget.NewSeparator())
 		}
 	}
@@ -647,8 +678,8 @@ func (s *appState) refreshSeriesRows() {
 
 // updateSeriesSelectionHighlight ปรับให้เห็นว่าแถวไหนถูกเลือกอยู่ โดยไม่ต้องสร้างแถวใหม่ทั้งหมด
 func (s *appState) updateSeriesSelectionHighlight() {
-	for i, row := range s.seriesRows {
-		row.SetSelected(i == s.selectedIdx)
+	for _, row := range s.seriesRows {
+		row.SetSelected(row.libIndex == s.selectedIdx)
 	}
 }
 
