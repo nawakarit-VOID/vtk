@@ -794,7 +794,10 @@ func (s *appState) refreshEpisodeRows() {
 		}
 
 		row := container.NewHBox(check, label, status, playBtn, renameBtn, delBtn)
-		s.episodeBox.Add(row)
+		wrappedRow := newDoubleTapWrapper(row, func() {
+			s.playEpisode(ep)
+		})
+		s.episodeBox.Add(wrappedRow)
 
 		if i < len(series.Episodes)-1 {
 			s.episodeBox.Add(widget.NewSeparator())
