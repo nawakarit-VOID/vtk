@@ -704,6 +704,14 @@ func (s *appState) refreshSeriesRows() {
 				s.episodeScroll.ScrollToTop()
 			}
 		}, func() {
+			s.selectedIdx = idx
+			s.updateSeriesSelectionHighlight()
+			s.refreshEpisodeRows()
+			if s.episodeScroll != nil {
+				s.episodeScroll.ScrollToTop()
+			}
+			s.playSelectedSeries()
+		}, func() {
 			sr.Starred = !sr.Starred
 			sortSeriesForDisplay(s.lib.SeriesList)
 			_ = SaveLibrary(s.lib)

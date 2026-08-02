@@ -14,23 +14,26 @@ import (
 // (widget.List บังคับทุกแถวสูงเท่ากันหมด เพราะเป็น list แบบ virtualized)
 type seriesRow struct {
 	widget.BaseWidget
-	content    *fyne.Container
-	label      *widget.Label
-	starBtn    *widget.Button
-	onTapped   func()
-	isSelected bool
-	libIndex   int // ตำแหน่งจริงใน lib.SeriesList (ไม่ใช่ตำแหน่งในลิสต์ที่กรองแล้ว ใช้เทียบ selectedIdx ให้ถูกต้อง)
+	content        *fyne.Container
+	label          *widget.Label
+	starBtn        *widget.Button
+	onTapped       func()
+	onDoubleTapped func()
+	isSelected     bool
+	libIndex       int // ตำแหน่งจริงใน lib.SeriesList (ไม่ใช่ตำแหน่งในลิสต์ที่กรองแล้ว ใช้เทียบ selectedIdx ให้ถูกต้อง)
 }
 
 // newSeriesRow สร้างแถวซีรีส์ 1 แถว
 //   - showStar: แสดงปุ่มติดดาวไหม (โฟลเดอร์แม่ไม่ต้องมี เพราะอยู่บนสุดอยู่แล้ว)
 //   - starred: สถานะติดดาวปัจจุบัน (ใช้ตอน showStar = true เท่านั้น)
-//   - onTapped: กดที่แถว (เลือกดูซีรีส์นี้)
+//   - onTapped: กดที่แถว 1 ครั้ง (เลือกดูซีรีส์นี้)
+//   - onDoubleTapped: ดับเบิลคลิกที่แถว (เล่นซีรีส์นี้ทั้งหมดทันที)
 //   - onStarTapped: กดปุ่มดาว (สลับสถานะติดดาว) แยกจาก onTapped ไม่ทำให้แถวถูกเลือกไปด้วย
-func newSeriesRow(text string, showStar bool, starred bool, onTapped func(), onStarTapped func()) *seriesRow {
+func newSeriesRow(text string, showStar bool, starred bool, onTapped func(), onDoubleTapped func(), onStarTapped func()) *seriesRow {
 	r := &seriesRow{
-		label:    widget.NewLabel(text),
-		onTapped: onTapped,
+		label:          widget.NewLabel(text),
+		onTapped:       onTapped,
+		onDoubleTapped: onDoubleTapped,
 	}
 	r.label.Wrapping = fyne.TextWrapWord
 
@@ -62,6 +65,13 @@ func (r *seriesRow) CreateRenderer() fyne.WidgetRenderer {
 func (r *seriesRow) Tapped(_ *fyne.PointEvent) {
 	if r.onTapped != nil {
 		r.onTapped()
+	}
+}
+
+// DoubleTapped ทำให้ดับเบิลคลิกที่แถวนี้ได้ (implement fyne.DoubleTappable)
+func (r *seriesRow) DoubleTapped(_ *fyne.PointEvent) {
+	if r.onDoubleTapped != nil {
+		r.onDoubleTapped()
 	}
 }
 
