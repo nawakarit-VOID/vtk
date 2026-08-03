@@ -14,13 +14,14 @@ import (
 // (widget.List บังคับทุกแถวสูงเท่ากันหมด เพราะเป็น list แบบ virtualized)
 type seriesRow struct {
 	widget.BaseWidget
-	content        *fyne.Container
-	label          *widget.Label
-	starBtn        *widget.Button
-	onTapped       func()
-	onDoubleTapped func()
-	isSelected     bool
-	libIndex       int // ตำแหน่งจริงใน lib.SeriesList (ไม่ใช่ตำแหน่งในลิสต์ที่กรองแล้ว ใช้เทียบ selectedIdx ให้ถูกต้อง)
+	content           *fyne.Container
+	label             *widget.Label
+	starBtn           *widget.Button
+	onTapped          func()
+	onDoubleTapped    func()
+	onSecondaryTapped func(*fyne.PointEvent)
+	isSelected        bool
+	libIndex          int // ตำแหน่งจริงใน lib.SeriesList (ไม่ใช่ตำแหน่งในลิสต์ที่กรองแล้ว ใช้เทียบ selectedIdx ให้ถูกต้อง)
 }
 
 // newSeriesRow สร้างแถวซีรีส์ 1 แถว
@@ -72,6 +73,13 @@ func (r *seriesRow) Tapped(_ *fyne.PointEvent) {
 func (r *seriesRow) DoubleTapped(_ *fyne.PointEvent) {
 	if r.onDoubleTapped != nil {
 		r.onDoubleTapped()
+	}
+}
+
+// TappedSecondary ทำให้คลิกขวาที่แถวนี้ได้ (implement fyne.SecondaryTappable)
+func (r *seriesRow) TappedSecondary(ev *fyne.PointEvent) {
+	if r.onSecondaryTapped != nil {
+		r.onSecondaryTapped(ev)
 	}
 }
 

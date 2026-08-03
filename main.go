@@ -348,6 +348,36 @@ func (s *appState) showStatistics() {
 	dialog.ShowInformation("สรุปสถิติ", msg, s.win)
 }
 
+// showSeriesContextMenu แสดงเมนูคลิกขวา (เล่น / แก้ชื่อ / ลบ) สำหรับซีรีส์ที่ตำแหน่ง idx ใน lib.SeriesList
+// ทำงานเดียวกันกับปุ่มบนแถบเครื่องมือทุกประการ แค่เข้าถึงผ่านคลิกขวาแทน
+func (s *appState) showSeriesContextMenu(idx int, ev *fyne.PointEvent) {
+	selectThis := func() {
+		s.selectedIdx = idx
+		s.updateSeriesSelectionHighlight()
+		s.refreshEpisodeRows()
+		if s.episodeScroll != nil {
+			s.episodeScroll.ScrollToTop()
+		}
+	}
+
+	playItem := fyne.NewMenuItem("▶ เล่น", func() {
+		selectThis()
+		s.playSelectedSeries()
+	})
+	renameItem := fyne.NewMenuItem("แก้ชื่อ", func() {
+		selectThis()
+		s.renameSelectedSeries()
+	})
+	deleteItem := fyne.NewMenuItem("ลบ", func() {
+		selectThis()
+		s.confirmDeleteSeries()
+	})
+	deleteItem.Icon = theme.DeleteIcon()
+
+	menu := fyne.NewMenu("", playItem, renameItem, deleteItem)
+	widget.ShowPopUpMenuAtPosition(menu, s.win.Canvas(), ev.AbsolutePosition)
+}
+
 // refreshAllRootFolders สแกนซ้ำทุกโฟลเดอร์แม่ที่เคย track ไว้ (IsRoot = true ทุกตัวใน library)
 // เพื่ออัปเดตโฟลเดอร์ย่อยใหม่/ไฟล์ใหม่ที่เพิ่มเข้ามาทีหลัง โดยไม่ต้องเปิด dialog เลือกทีละโฟลเดอร์
 // ถ้าโฟลเดอร์แม่ไหนสแกนไม่สำเร็จ (เช่น USB ไม่ได้เสียบ) จะข้ามไปตัวถัดไป ไม่หยุดทั้งหมด แล้วสรุป error รวมท้ายสุด
@@ -719,6 +749,9 @@ func (s *appState) refreshSeriesRows() {
 		})
 		row.SetSelected(idx == s.selectedIdx)
 		row.libIndex = idx
+		row.onSecondaryTapped = func(ev *fyne.PointEvent) {
+			s.showSeriesContextMenu(idx, ev)
+		}
 		s.seriesRows = append(s.seriesRows, row)
 		s.seriesBox.Add(row)
 
