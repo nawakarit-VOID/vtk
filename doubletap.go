@@ -8,13 +8,15 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// doubleTapWrapper ห่อ content ใดก็ได้ให้ดับเบิลคลิกได้ (implement fyne.DoubleTappable)
-// ใช้กับแถวตอนในหน้าตอน เพื่อดับเบิลคลิกที่แถวแล้วเล่นไฟล์นั้นได้ทันที โดยปุ่มต่าง ๆ
-// ที่อยู่ข้างในแถว (เล่น/แก้ชื่อ/ลบ) ยังกดทำงานของตัวเองได้ตามปกติ ไม่ชนกัน
+// doubleTapWrapper ห่อ content ใดก็ได้ให้ดับเบิลคลิก/คลิกขวาได้
+// (implement fyne.DoubleTappable และ fyne.SecondaryTappable)
+// ใช้กับแถวตอนในหน้าตอน เพื่อดับเบิลคลิกแล้วเล่นไฟล์นั้นได้ทันที หรือคลิกขวาเปิดเมนู
+// โดยปุ่มต่าง ๆ ที่อยู่ข้างในแถว (เล่น/แก้ชื่อ/ลบ) ยังกดทำงานของตัวเองได้ตามปกติ ไม่ชนกัน
 type doubleTapWrapper struct {
 	widget.BaseWidget
-	content        fyne.CanvasObject
-	onDoubleTapped func()
+	content           fyne.CanvasObject
+	onDoubleTapped    func()
+	onSecondaryTapped func(*fyne.PointEvent)
 }
 
 func newDoubleTapWrapper(content fyne.CanvasObject, onDoubleTapped func()) *doubleTapWrapper {
@@ -31,5 +33,12 @@ func (w *doubleTapWrapper) CreateRenderer() fyne.WidgetRenderer {
 func (w *doubleTapWrapper) DoubleTapped(_ *fyne.PointEvent) {
 	if w.onDoubleTapped != nil {
 		w.onDoubleTapped()
+	}
+}
+
+// TappedSecondary implement fyne.SecondaryTappable (คลิกขวา)
+func (w *doubleTapWrapper) TappedSecondary(ev *fyne.PointEvent) {
+	if w.onSecondaryTapped != nil {
+		w.onSecondaryTapped(ev)
 	}
 }

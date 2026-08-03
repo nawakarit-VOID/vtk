@@ -378,6 +378,28 @@ func (s *appState) showSeriesContextMenu(idx int, ev *fyne.PointEvent) {
 	widget.ShowPopUpMenuAtPosition(menu, s.win.Canvas(), ev.AbsolutePosition)
 }
 
+// showEpisodeContextMenu แสดงเมนูคลิกขวา (เล่น / แก้ชื่อ / ลบ) สำหรับไฟล์ตอนนี้
+// ทำงานเดียวกันกับปุ่มต่อแถวในหน้าตอนทุกประการ แค่เข้าถึงผ่านคลิกขวาแทน
+func (s *appState) showEpisodeContextMenu(series *Series, ep *Episode, ev *fyne.PointEvent) {
+	playItem := fyne.NewMenuItem("▶ เล่น", func() {
+		s.playEpisode(ep)
+	})
+	playItem.Disabled = !ep.Exists
+
+	renameItem := fyne.NewMenuItem("แก้ชื่อ", func() {
+		s.renameEpisode(ep)
+	})
+	renameItem.Disabled = !ep.Exists
+
+	deleteItem := fyne.NewMenuItem("ลบ", func() {
+		s.confirmDeleteEpisode(series, ep)
+	})
+	deleteItem.Icon = theme.DeleteIcon()
+
+	menu := fyne.NewMenu("", playItem, renameItem, deleteItem)
+	widget.ShowPopUpMenuAtPosition(menu, s.win.Canvas(), ev.AbsolutePosition)
+}
+
 // refreshAllRootFolders สแกนซ้ำทุกโฟลเดอร์แม่ที่เคย track ไว้ (IsRoot = true ทุกตัวใน library)
 // เพื่ออัปเดตโฟลเดอร์ย่อยใหม่/ไฟล์ใหม่ที่เพิ่มเข้ามาทีหลัง โดยไม่ต้องเปิด dialog เลือกทีละโฟลเดอร์
 // ถ้าโฟลเดอร์แม่ไหนสแกนไม่สำเร็จ (เช่น USB ไม่ได้เสียบ) จะข้ามไปตัวถัดไป ไม่หยุดทั้งหมด แล้วสรุป error รวมท้ายสุด
@@ -830,6 +852,9 @@ func (s *appState) refreshEpisodeRows() {
 		wrappedRow := newDoubleTapWrapper(row, func() {
 			s.playEpisode(ep)
 		})
+		wrappedRow.onSecondaryTapped = func(ev *fyne.PointEvent) {
+			s.showEpisodeContextMenu(series, ep, ev)
+		}
 		s.episodeBox.Add(wrappedRow)
 
 		if i < len(series.Episodes)-1 {
