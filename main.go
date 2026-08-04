@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Nawakarit
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License v3.0.
+// Copyright (c) 2026 Nawakarit
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License v3.0.
 package main
 
 import (
@@ -110,7 +113,10 @@ func main() {
 	statsBtn := widget.NewButtonWithIcon("สถิติ", theme.InfoIcon(), func() {
 		state.showStatistics()
 	})
-	toolbar := container.NewHBox(scanBtn, refreshAllBtn, organizeBtn, playSeriesBtn, renameSeriesBtn, deleteSeriesBtn, statsBtn)
+	continueBtn := widget.NewButtonWithIcon("ดูต่อ", theme.HistoryIcon(), func() {
+		state.showContinueWatching()
+	})
+	toolbar := container.NewHBox(scanBtn, refreshAllBtn, organizeBtn, playSeriesBtn, renameSeriesBtn, deleteSeriesBtn, statsBtn, continueBtn)
 
 	state.seriesBox = container.NewVBox()
 	state.refreshSeriesRows()
@@ -398,6 +404,59 @@ func (s *appState) showEpisodeContextMenu(series *Series, ep *Episode, ev *fyne.
 
 	menu := fyne.NewMenu("", playItem, renameItem, deleteItem)
 	widget.ShowPopUpMenuAtPosition(menu, s.win.Canvas(), ev.AbsolutePosition)
+}
+
+// showContinueWatching รวมทุกตอน (จากทุกซีรีส์) ที่มีจุดค้างไว้ (ResumeSeconds > 0 และไฟล์ยังอยู่จริง)
+// เรียงจากที่เพิ่งเล่นค้างล่าสุดไปเก่าสุด (LastPlayedAt) แต่ละแถวกดเล่นต่อได้ทันที
+func (s *appState) showContinueWatching() {
+	type cwItem struct {
+		series *Series
+		ep     *Episode
+	}
+	var items []cwItem
+	for _, series := range s.lib.SeriesList {
+		for _, ep := range series.Episodes {
+			if ep.Exists && ep.ResumeSeconds > 1 {
+				items = append(items, cwItem{series: series, ep: ep})
+			}
+		}
+	}
+
+	if len(items) == 0 {
+		dialog.ShowInformation("ดูต่อ", "ยังไม่มีตอนที่ดูค้างไว้เลย", s.win)
+		return
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].ep.LastPlayedAt > items[j].ep.LastPlayedAt // เพิ่งเล่นล่าสุดขึ้นก่อน
+	})
+
+	list := container.NewVBox()
+	for i, it := range items {
+		it := it // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+
+		label := widget.NewLabel(fmt.Sprintf("%s\n%s — ค้างไว้ที่ %s",
+			it.series.Name, it.ep.FileName, formatDuration(it.ep.ResumeSeconds)))
+		label.Wrapping = fyne.TextWrapWord
+
+		playBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), func() {
+			s.playEpisode(it.ep)
+		})
+
+		row := container.NewBorder(nil, nil, nil, playBtn, label)
+		list.Add(row)
+
+		if i < len(items)-1 {
+			list.Add(widget.NewSeparator())
+		}
+	}
+
+	scroll := container.NewVScroll(list)
+	scroll.SetMinSize(fyne.NewSize(520, 420))
+
+	d := dialog.NewCustom("ดูต่อ", "ปิด", scroll, s.win)
+	d.Resize(fyne.NewSize(560, 480))
+	d.Show()
 }
 
 // refreshAllRootFolders สแกนซ้ำทุกโฟลเดอร์แม่ที่เคย track ไว้ (IsRoot = true ทุกตัวใน library)
