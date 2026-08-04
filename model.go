@@ -12,6 +12,7 @@ type Episode struct {
 	Exists          bool    `json:"exists"`           // false = ไฟล์ถูกลบไปแล้วจากดิสก์
 	ResumeSeconds   float64 `json:"resume_seconds"`   // จุดที่เล่นค้างไว้ (วินาที) มาจากการ track ผ่าน mpv IPC, 0 = ไม่มีจุดค้าง
 	DurationSeconds float64 `json:"duration_seconds"` // ความยาวไฟล์ (วินาที) รู้ได้ก็ต่อเมื่อเคยเล่นผ่าน mpv ในแอปนี้อย่างน้อย 1 ครั้ง, 0 = ยังไม่ทราบ
+	LastPlayedAt    int64   `json:"last_played_at"`   // unix timestamp ล่าสุดที่มีการเล่นค้างไว้ (ResumeSeconds > 0), ใช้เรียงหน้า "ดูต่อ"
 }
 
 // Series คือกลุ่มของ Episode (1 โฟลเดอร์ = 1 ซีรีส์)
