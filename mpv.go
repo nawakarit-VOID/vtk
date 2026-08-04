@@ -155,6 +155,9 @@ func (s *appState) playEpisodeTracked(ep *Episode) {
 		} else {
 			ep.ResumeSeconds = 0
 		}
+		if ep.ResumeSeconds > 0 {
+			ep.LastPlayedAt = time.Now().Unix()
+		}
 
 		saveErr := SaveLibrary(s.lib)
 		fyne.Do(func() {
@@ -277,6 +280,9 @@ func (s *appState) playSeriesTracked(series *Series) {
 				ep.ResumeSeconds = pos
 			} else {
 				ep.ResumeSeconds = 0
+			}
+			if ep.ResumeSeconds > 0 {
+				ep.LastPlayedAt = time.Now().Unix()
 			}
 			saveErr := SaveLibrary(s.lib)
 			fyne.Do(func() {
