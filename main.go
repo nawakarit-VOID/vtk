@@ -1,9 +1,6 @@
 // Copyright (c) 2026 Nawakarit
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License v3.0.
-// Copyright (c) 2026 Nawakarit
-// This program is free software: you can redistribute it and/or modify
-// it under the terms of the GNU General Public License v3.0.
 package main
 
 import (
@@ -24,15 +21,12 @@ import (
 )
 
 type appState struct {
-	lib           *Library
-	win           fyne.Window
-	seriesBox     *fyne.Container // VBox ของแถวซีรีส์ (แทน widget.List เดิม เพื่อให้แต่ละแถวสูงตามเนื้อหาได้)
-	seriesRows    []*seriesRow
-	searchQuery   string            // คำค้นหาปัจจุบัน (กรองรายชื่อซีรีส์ทางซ้าย)
-	episodeBox    *fyne.Container   // VBox ของแถวตอน (แทน widget.List เดิม เพื่อให้เลื่อนแนวนอนได้ตอนชื่อไฟล์ยาว)
-	episodeScroll *container.Scroll // ตัวครอบ episodeBox เก็บไว้เพื่อสั่ง Refresh/เลื่อนกลับบนสุดได้ตรง ๆ
-	selectedIdx   int
-	rootPath      string
+	lib         *Library
+	win         fyne.Window
+	tabs        map[string]*tabState // 1 แท็บ ต่อ 1 โฟลเดอร์แม่ที่เคยสแกน (key = root path)
+	tabsWidget  *container.AppTabs
+	selectedIdx int
+	rootPath    string
 }
 
 // โหลด icon
@@ -89,7 +83,13 @@ func main() {
 	}
 	sortSeriesForDisplay(lib.SeriesList)
 
-	state := &appState{lib: lib, win: w, selectedIdx: -1}
+	state := &appState{
+		lib:         lib,
+		win:         w,
+		tabs:        map[string]*tabState{},
+		tabsWidget:  container.NewAppTabs(),
+		selectedIdx: -1,
+	}
 
 	scanBtn := widget.NewButtonWithIcon("สแกนโฟลเดอร์", theme.FolderOpenIcon(), func() {
 		state.chooseAndScan()
@@ -118,28 +118,24 @@ func main() {
 	})
 	toolbar := container.NewHBox(scanBtn, refreshAllBtn, organizeBtn, playSeriesBtn, renameSeriesBtn, deleteSeriesBtn, statsBtn, continueBtn)
 
-	state.seriesBox = container.NewVBox()
-	state.refreshSeriesRows()
+	// สร้างแท็บให้ครบทุกโฟลเดอร์แม่ที่เคยสแกนไว้จากเซสชันก่อนหน้า (ถ้ามี) เรียงตามชื่อให้ลำดับคงที่ทุกครั้งที่เปิดแอป
+	rootSet := map[string]bool{}
+	for _, sr := range lib.SeriesList {
+		rootSet[seriesRootKey(sr)] = true
+	}
+	var existingRoots []string
+	for p := range rootSet {
+		existingRoots = append(existingRoots, p)
+	}
+	sort.Strings(existingRoots)
+	for _, p := range existingRoots {
+		state.ensureTab(p)
+	}
 
-	state.episodeBox = container.NewVBox()
-	state.episodeScroll = container.NewScroll(state.episodeBox)
-	state.episodeScroll.Direction = container.ScrollBoth
+	state.refreshSeriesRows()
 	state.refreshEpisodeRows()
 
-	seriesScroll := container.NewVScroll(state.seriesBox)
-
-	searchEntry := widget.NewEntry()
-	searchEntry.SetPlaceHolder("ค้นหาชื่อซีรีส์...")
-	searchEntry.OnChanged = func(text string) {
-		state.searchQuery = text
-		state.refreshSeriesRows()
-	}
-	seriesPanel := container.NewBorder(searchEntry, nil, nil, nil, seriesScroll)
-
-	split := container.NewHSplit(seriesPanel, state.episodeScroll)
-	split.Offset = 0.38
-
-	content := container.NewBorder(toolbar, nil, nil, nil, split)
+	content := container.NewBorder(toolbar, nil, nil, nil, state.tabsWidget)
 	w.SetContent(content)
 	w.ShowAndRun()
 }
@@ -361,8 +357,11 @@ func (s *appState) showSeriesContextMenu(idx int, ev *fyne.PointEvent) {
 		s.selectedIdx = idx
 		s.updateSeriesSelectionHighlight()
 		s.refreshEpisodeRows()
-		if s.episodeScroll != nil {
-			s.episodeScroll.ScrollToTop()
+		if idx >= 0 && idx < len(s.lib.SeriesList) {
+			key := seriesRootKey(s.lib.SeriesList[idx])
+			if t, ok := s.tabs[key]; ok && t.episodeScroll != nil {
+				t.episodeScroll.ScrollToTop()
+			}
 		}
 	}
 
@@ -459,15 +458,17 @@ func (s *appState) showContinueWatching() {
 	d.Show()
 }
 
-// refreshAllRootFolders สแกนซ้ำทุกโฟลเดอร์แม่ที่เคย track ไว้ (IsRoot = true ทุกตัวใน library)
+// refreshAllRootFolders สแกนซ้ำทุกโฟลเดอร์แม่ที่เคย track ไว้ (ทุกแท็บที่มีอยู่)
 // เพื่ออัปเดตโฟลเดอร์ย่อยใหม่/ไฟล์ใหม่ที่เพิ่มเข้ามาทีหลัง โดยไม่ต้องเปิด dialog เลือกทีละโฟลเดอร์
 // ถ้าโฟลเดอร์แม่ไหนสแกนไม่สำเร็จ (เช่น USB ไม่ได้เสียบ) จะข้ามไปตัวถัดไป ไม่หยุดทั้งหมด แล้วสรุป error รวมท้ายสุด
 func (s *appState) refreshAllRootFolders() {
-	var rootPaths []string
+	rootSet := map[string]bool{}
 	for _, sr := range s.lib.SeriesList {
-		if sr.IsRoot {
-			rootPaths = append(rootPaths, sr.RootPath)
-		}
+		rootSet[seriesRootKey(sr)] = true
+	}
+	var rootPaths []string
+	for p := range rootSet {
+		rootPaths = append(rootPaths, p)
 	}
 	if len(rootPaths) == 0 {
 		dialog.ShowInformation("รีเฟรชโฟลเดอร์แม่", "ยังไม่เคยสแกนโฟลเดอร์แม่ไว้เลย ลองกด \"สแกนโฟลเดอร์\" ก่อน", s.win)
@@ -476,6 +477,7 @@ func (s *appState) refreshAllRootFolders() {
 
 	var failed []string
 	for _, path := range rootPaths {
+		s.ensureTab(path)
 		scanned, err := ScanFolder(path)
 		if err != nil {
 			failed = append(failed, fmt.Sprintf("%s (%v)", path, err))
@@ -497,6 +499,8 @@ func (s *appState) refreshAllRootFolders() {
 	}
 }
 
+// chooseAndScan ให้ผู้ใช้เลือกโฟลเดอร์ผ่าน dialog แล้วสแกน โฟลเดอร์แม่แต่ละอันจะได้แท็บของตัวเอง
+// (ถ้าเป็นโฟลเดอร์แม่ใหม่ที่ยังไม่เคยสแกน จะสร้างแท็บใหม่ต่อท้ายและโฟกัสไปแท็บนั้นให้อัตโนมัติ)
 func (s *appState) chooseAndScan() {
 	dialog.ShowFolderOpen(func(uri fyne.ListableURI, err error) {
 		if err != nil {
@@ -508,6 +512,8 @@ func (s *appState) chooseAndScan() {
 		}
 		path := uri.Path()
 		s.rootPath = path
+		t := s.ensureTab(path)
+		s.tabsWidget.Select(t.tabItem)
 
 		scanned, err := ScanFolder(path)
 		if err != nil {
@@ -766,166 +772,186 @@ func (s *appState) playSelectedSeries() {
 	playFile(s.win, paths[0])
 }
 
-// refreshSeriesRows สร้างแถวซีรีส์ใหม่ทั้งหมดใน seriesBox ให้ตรงกับ lib.SeriesList ปัจจุบัน
-// (กรองตาม s.searchQuery ถ้ามีการพิมพ์ค้นหาไว้) เรียกทุกครั้งที่ลิสต์ซีรีส์เปลี่ยน
-// (สแกน, ลบ, จัดกลุ่ม, แก้ชื่อ, พิมพ์ค้นหา ฯลฯ) แทนที่ widget.List.Refresh() เดิม
+// refreshSeriesRows สร้างแถวซีรีส์ใหม่ทั้งหมดในทุกแท็บ ให้ตรงกับ lib.SeriesList ปัจจุบัน
+// (กรองตามคำค้นหาของแต่ละแท็บ ถ้ามีการพิมพ์ค้นหาไว้) เรียกทุกครั้งที่ลิสต์ซีรีส์เปลี่ยน
+// (สแกน, ลบ, จัดกลุ่ม, แก้ชื่อ, พิมพ์ค้นหา ฯลฯ)
 // แต่ละแถวจองความสูงตามเนื้อหาจริงของตัวเอง (ชื่อยาวแค่ไหนก็ไม่ล้น เพราะไม่ใช่ list แบบ virtualized)
 func (s *appState) refreshSeriesRows() {
-	s.seriesBox.Objects = nil
-	s.seriesRows = nil
-
-	query := strings.ToLower(strings.TrimSpace(s.searchQuery))
-
-	var matchedIdx []int
+	byRoot := map[string][]int{}
 	for i, series := range s.lib.SeriesList {
-		if query == "" || strings.Contains(strings.ToLower(series.Name), query) {
-			matchedIdx = append(matchedIdx, i)
-		}
+		key := seriesRootKey(series)
+		byRoot[key] = append(byRoot[key], i)
 	}
 
-	if len(matchedIdx) == 0 {
-		msg := "ยังไม่มีซีรีส์ในลิสต์ ลองกด \"สแกนโฟลเดอร์\" ก่อน"
-		if query != "" {
-			msg = "ไม่พบซีรีส์ที่ตรงกับคำค้นหา"
-		}
-		s.seriesBox.Add(widget.NewLabel(msg))
-		s.seriesBox.Refresh()
-		return
-	}
+	for rootPath, t := range s.tabs {
+		t := t // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
 
-	for pos, i := range matchedIdx {
-		idx := i // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
-		series := s.lib.SeriesList[idx]
-		sr := series // capture ไว้ในลูป สำหรับ closure ของปุ่มดาว
+		t.seriesBox.Objects = nil
+		t.seriesRows = nil
 
-		nameLine := series.Name
-		if series.IsRoot {
-			nameLine = "🏠 " + nameLine + " (โฟลเดอร์แม่)"
-		} else if series.Starred {
-			nameLine = "★ " + nameLine
-		}
-		text := fmt.Sprintf("%s\nดูล่าสุด: ตอน %d  (ดูแล้ว %d/%d ตอน)",
-			nameLine, series.LastWatchedEpisode(), series.WatchedCount(), series.TotalCount())
+		query := strings.ToLower(strings.TrimSpace(t.searchQuery))
 
-		row := newSeriesRow(text, !series.IsRoot, series.Starred, func() {
-			s.selectedIdx = idx
-			s.updateSeriesSelectionHighlight()
-			s.refreshEpisodeRows()
-			if s.episodeScroll != nil {
-				s.episodeScroll.ScrollToTop()
+		var matchedIdx []int
+		for _, i := range byRoot[rootPath] {
+			if query == "" || strings.Contains(strings.ToLower(s.lib.SeriesList[i].Name), query) {
+				matchedIdx = append(matchedIdx, i)
 			}
-		}, func() {
-			s.selectedIdx = idx
-			s.updateSeriesSelectionHighlight()
-			s.refreshEpisodeRows()
-			if s.episodeScroll != nil {
-				s.episodeScroll.ScrollToTop()
+		}
+
+		if len(matchedIdx) == 0 {
+			msg := "ยังไม่มีซีรีส์ในโฟลเดอร์นี้"
+			if query != "" {
+				msg = "ไม่พบซีรีส์ที่ตรงกับคำค้นหา"
 			}
-			s.playSelectedSeries()
-		}, func() {
-			sr.Starred = !sr.Starred
-			sortSeriesForDisplay(s.lib.SeriesList)
-			_ = SaveLibrary(s.lib)
-			s.refreshSeriesRows()
-		})
-		row.SetSelected(idx == s.selectedIdx)
-		row.libIndex = idx
-		row.onSecondaryTapped = func(ev *fyne.PointEvent) {
-			s.showSeriesContextMenu(idx, ev)
+			t.seriesBox.Add(widget.NewLabel(msg))
+			t.seriesBox.Refresh()
+			continue
 		}
-		s.seriesRows = append(s.seriesRows, row)
-		s.seriesBox.Add(row)
 
-		if pos < len(matchedIdx)-1 {
-			s.seriesBox.Add(widget.NewSeparator())
+		for pos, i := range matchedIdx {
+			idx := i // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+			series := s.lib.SeriesList[idx]
+			sr := series // capture ไว้ในลูป สำหรับ closure ของปุ่มดาว
+
+			nameLine := series.Name
+			if series.Starred {
+				nameLine = "★ " + nameLine
+			}
+			text := fmt.Sprintf("%s\nดูล่าสุด: ตอน %d  (ดูแล้ว %d/%d ตอน)",
+				nameLine, series.LastWatchedEpisode(), series.WatchedCount(), series.TotalCount())
+
+			row := newSeriesRow(text, !series.IsRoot, series.Starred, func() {
+				s.selectedIdx = idx
+				s.updateSeriesSelectionHighlight()
+				s.refreshEpisodeRows()
+				if t.episodeScroll != nil {
+					t.episodeScroll.ScrollToTop()
+				}
+			}, func() {
+				s.selectedIdx = idx
+				s.updateSeriesSelectionHighlight()
+				s.refreshEpisodeRows()
+				if t.episodeScroll != nil {
+					t.episodeScroll.ScrollToTop()
+				}
+				s.playSelectedSeries()
+			}, func() {
+				sr.Starred = !sr.Starred
+				sortSeriesForDisplay(s.lib.SeriesList)
+				_ = SaveLibrary(s.lib)
+				s.refreshSeriesRows()
+			})
+			row.SetSelected(idx == s.selectedIdx)
+			row.libIndex = idx
+			row.onSecondaryTapped = func(ev *fyne.PointEvent) {
+				s.showSeriesContextMenu(idx, ev)
+			}
+			t.seriesRows = append(t.seriesRows, row)
+			t.seriesBox.Add(row)
+
+			if pos < len(matchedIdx)-1 {
+				t.seriesBox.Add(widget.NewSeparator())
+			}
 		}
+
+		t.seriesBox.Refresh()
 	}
-
-	s.seriesBox.Refresh()
 }
 
-// updateSeriesSelectionHighlight ปรับให้เห็นว่าแถวไหนถูกเลือกอยู่ โดยไม่ต้องสร้างแถวใหม่ทั้งหมด
+// updateSeriesSelectionHighlight ปรับให้เห็นว่าแถวไหนถูกเลือกอยู่ (ในทุกแท็บ) โดยไม่ต้องสร้างแถวใหม่ทั้งหมด
 func (s *appState) updateSeriesSelectionHighlight() {
-	for _, row := range s.seriesRows {
-		row.SetSelected(row.libIndex == s.selectedIdx)
+	for _, t := range s.tabs {
+		for _, row := range t.seriesRows {
+			row.SetSelected(row.libIndex == s.selectedIdx)
+		}
 	}
 }
 
-// refreshEpisodeRows สร้างแถวตอนใหม่ทั้งหมดใน episodeBox ให้ตรงกับซีรีส์ที่เลือกอยู่ (selectedIdx)
-// เรียกทุกครั้งที่รายการตอนควรเปลี่ยน (เลือกซีรีส์ใหม่, ติ๊กดูแล้ว, ลบ, เล่นจบ ฯลฯ) แทน widget.List.Refresh() เดิม
+// refreshEpisodeRows สร้างแถวตอนใหม่ทั้งหมดในแท็บที่เป็นเจ้าของซีรีส์ที่เลือกอยู่ (selectedIdx) เท่านั้น
+// แท็บอื่นจะโชว์รายการตอนว่างเปล่า (เพราะ selection ใช้ร่วมกันทั้งแอป ไม่ใช่แยกต่อแท็บ)
+// เรียกทุกครั้งที่รายการตอนควรเปลี่ยน (เลือกซีรีส์ใหม่, ติ๊กดูแล้ว, ลบ, เล่นจบ ฯลฯ)
 // แต่ละแถวไม่ตัดคำ (ไม่ wrap) เพื่อให้ชื่อไฟล์ยาว ๆ ดันความกว้างของแถวออกไปได้ แล้วเลื่อนดูได้ผ่าน
-// scroll แนวนอนของ container ที่ครอบอยู่ (ดูตอนสร้าง UI ใน main())
+// scroll แนวนอนของ container ที่ครอบอยู่
 func (s *appState) refreshEpisodeRows() {
-	s.episodeBox.Objects = nil
-
-	if s.selectedIdx < 0 || s.selectedIdx >= len(s.lib.SeriesList) {
-		s.episodeBox.Refresh()
-		if s.episodeScroll != nil {
-			s.episodeScroll.Refresh()
-		}
-		return
-	}
-	series := s.lib.SeriesList[s.selectedIdx]
-
-	for i, ep := range series.Episodes {
-		ep := ep // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
-
-		check := widget.NewCheck("", nil)
-		resumeNote := ""
-		if ep.ResumeSeconds > 1 {
-			resumeNote = fmt.Sprintf(" (ค้างไว้ที่ %s)", formatDuration(ep.ResumeSeconds))
-		}
-		label := widget.NewLabel(fmt.Sprintf("%s%s", ep.FileName, resumeNote))
-		status := widget.NewLabel("")
-		playBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), nil)
-		renameBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), nil)
-		delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
-
-		check.SetChecked(ep.Watched)
-		check.OnChanged = func(v bool) {
-			ep.Watched = v
-			s.refreshSeriesRows()
-			_ = SaveLibrary(s.lib)
-		}
-		playBtn.OnTapped = func() {
-			s.playEpisode(ep)
-		}
-		renameBtn.OnTapped = func() {
-			s.renameEpisode(ep)
-		}
-		delBtn.OnTapped = func() {
-			s.confirmDeleteEpisode(series, ep)
-		}
-
-		if ep.Exists {
-			playBtn.Enable()
-			renameBtn.Enable()
-		} else {
-			status.Importance = widget.DangerImportance
-			status.SetText("ไฟล์ถูกลบแล้ว")
-			playBtn.Disable()
-			renameBtn.Disable()
-		}
-
-		row := container.NewHBox(check, label, status, playBtn, renameBtn, delBtn)
-		wrappedRow := newDoubleTapWrapper(row, func() {
-			s.playEpisode(ep)
-		})
-		wrappedRow.onSecondaryTapped = func(ev *fyne.PointEvent) {
-			s.showEpisodeContextMenu(series, ep, ev)
-		}
-		s.episodeBox.Add(wrappedRow)
-
-		if i < len(series.Episodes)-1 {
-			s.episodeBox.Add(widget.NewSeparator())
-		}
+	var series *Series
+	var selectedRoot string
+	if s.selectedIdx >= 0 && s.selectedIdx < len(s.lib.SeriesList) {
+		series = s.lib.SeriesList[s.selectedIdx]
+		selectedRoot = seriesRootKey(series)
 	}
 
-	s.episodeBox.Refresh()
-	// Refresh ตัว Scroll ที่ครอบอยู่ด้วยตรง ๆ ไม่งั้นบางครั้ง Fyne ไม่คำนวณขนาดเนื้อหาใหม่ให้
-	// (ต้องรอ event อื่นมากระตุ้น เช่นเอาเมาส์ไปจ่อ scrollbar ถึงจะ redraw ให้เห็น)
-	if s.episodeScroll != nil {
-		s.episodeScroll.Refresh()
+	for rootPath, t := range s.tabs {
+		t := t // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+		t.episodeBox.Objects = nil
+
+		if series == nil || rootPath != selectedRoot {
+			t.episodeBox.Refresh()
+			if t.episodeScroll != nil {
+				t.episodeScroll.Refresh()
+			}
+			continue
+		}
+
+		for i, ep := range series.Episodes {
+			ep := ep // capture ไว้ในลูป ป้องกันปัญหาตัวแปรซ้ำใน closure
+
+			check := widget.NewCheck("", nil)
+			resumeNote := ""
+			if ep.ResumeSeconds > 1 {
+				resumeNote = fmt.Sprintf(" (ค้างไว้ที่ %s)", formatDuration(ep.ResumeSeconds))
+			}
+			label := widget.NewLabel(fmt.Sprintf("%s%s", ep.FileName, resumeNote))
+			status := widget.NewLabel("")
+			playBtn := widget.NewButtonWithIcon("", theme.MediaPlayIcon(), nil)
+			renameBtn := widget.NewButtonWithIcon("", theme.DocumentCreateIcon(), nil)
+			delBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), nil)
+
+			check.SetChecked(ep.Watched)
+			check.OnChanged = func(v bool) {
+				ep.Watched = v
+				s.refreshSeriesRows()
+				_ = SaveLibrary(s.lib)
+			}
+			playBtn.OnTapped = func() {
+				s.playEpisode(ep)
+			}
+			renameBtn.OnTapped = func() {
+				s.renameEpisode(ep)
+			}
+			delBtn.OnTapped = func() {
+				s.confirmDeleteEpisode(series, ep)
+			}
+
+			if ep.Exists {
+				playBtn.Enable()
+				renameBtn.Enable()
+			} else {
+				status.Importance = widget.DangerImportance
+				status.SetText("ไฟล์ถูกลบแล้ว")
+				playBtn.Disable()
+				renameBtn.Disable()
+			}
+
+			row := container.NewHBox(check, label, status, playBtn, renameBtn, delBtn)
+			wrappedRow := newDoubleTapWrapper(row, func() {
+				s.playEpisode(ep)
+			})
+			wrappedRow.onSecondaryTapped = func(ev *fyne.PointEvent) {
+				s.showEpisodeContextMenu(series, ep, ev)
+			}
+			t.episodeBox.Add(wrappedRow)
+
+			if i < len(series.Episodes)-1 {
+				t.episodeBox.Add(widget.NewSeparator())
+			}
+		}
+
+		t.episodeBox.Refresh()
+		// Refresh ตัว Scroll ที่ครอบอยู่ด้วยตรง ๆ ไม่งั้นบางครั้ง Fyne ไม่คำนวณขนาดเนื้อหาใหม่ให้
+		// (ต้องรอ event อื่นมากระตุ้น เช่นเอาเมาส์ไปจ่อ scrollbar ถึงจะ redraw ให้เห็น)
+		if t.episodeScroll != nil {
+			t.episodeScroll.Refresh()
+		}
 	}
 }
 
