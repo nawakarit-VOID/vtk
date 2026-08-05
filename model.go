@@ -51,5 +51,6 @@ func (s *Series) WatchedCount() int {
 
 // Library คือฐานข้อมูลทั้งหมดที่จะถูกเซฟลง JSON
 type Library struct {
-	SeriesList []*Series `json:"series_list"`
+	SeriesList []*Series         `json:"series_list"`
+	TabTitles  map[string]string `json:"tab_titles,omitempty"` // root path -> ชื่อแท็บที่ตั้งเอง (ไม่ได้ตั้งไว้ = ใช้ชื่อโฟลเดอร์)
 }
